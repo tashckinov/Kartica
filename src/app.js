@@ -147,16 +147,8 @@ const renderTopicDetail = (topic) => {
         <h2 class="topic-modes-title">Режимы</h2>
         <div class="topic-modes-grid">
           <button class="mode-button" type="button" data-mode="study">
-            <span class="mode-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 5a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" />
-                <path d="M14 3v5h5" />
-              </svg>
-            </span>
-            <span class="mode-content">
-              <span class="mode-title">Изучение</span>
-              <span class="mode-subtitle">Листайте карточки одну за другой</span>
-            </span>
+            <span class="mode-title">Изучение</span>
+            <span class="mode-subtitle">Листайте карточки одну за другой</span>
           </button>
         </div>
       </section>
