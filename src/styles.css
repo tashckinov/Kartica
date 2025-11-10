@@ -72,11 +72,12 @@ body.study-open {
 .app-main {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
 }
 
 .app-header {
-  padding: 32px 24px 24px;
+  padding: 28px 20px 22px;
   display: grid;
   gap: 12px;
   background: linear-gradient(155deg, rgba(56, 189, 248, 0.32), rgba(17, 34, 66, 0.9));
@@ -108,8 +109,8 @@ body.study-open {
 
 .topics-grid {
   display: grid;
-  gap: 20px;
-  padding: 28px 24px 36px;
+  gap: 18px;
+  padding: 24px 20px 32px;
 }
 
 .topic-card {
@@ -199,16 +200,16 @@ body.study-open {
 
 .topic-detail {
   display: grid;
-  gap: 32px;
-  padding: 28px 24px 48px;
+  gap: 28px;
+  padding: 24px 20px 40px;
 }
 
 .topic-detail-header {
   display: grid;
   grid-template-columns: auto 1fr;
   align-items: center;
-  gap: 16px;
-  padding: 18px;
+  gap: 14px;
+  padding: 16px;
   border-radius: 22px;
   background:
     linear-gradient(135deg, rgba(56, 189, 248, 0.14), rgba(8, 23, 56, 0.82)),
@@ -271,8 +272,8 @@ body.study-open {
 
 .topic-hero {
   display: grid;
-  gap: 16px;
-  padding: 20px;
+  gap: 14px;
+  padding: 18px;
   border-radius: 24px;
   background:
     linear-gradient(160deg, rgba(56, 189, 248, 0.18), rgba(12, 74, 110, 0.08)),
@@ -307,8 +308,8 @@ body.study-open {
 
 .topic-modes {
   display: grid;
-  gap: 16px;
-  padding: 20px;
+  gap: 14px;
+  padding: 18px;
   border-radius: 22px;
   background:
     linear-gradient(150deg, rgba(56, 189, 248, 0.16), rgba(14, 116, 144, 0.08)),
@@ -332,8 +333,8 @@ body.study-open {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 18px;
+  gap: 10px;
+  padding: 16px;
   border-radius: 18px;
   border: 1px solid color-mix(in srgb, var(--accent-color) 26%, var(--border-color));
   background:
@@ -353,22 +354,25 @@ body.study-open {
 }
 
 .mode-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
+  flex-shrink: 0;
 }
 
 .mode-subtitle {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--muted-text-color);
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
+  flex: 1;
+  min-width: 0;
 }
 
 .topic-cards {
   display: grid;
-  gap: 16px;
-  padding: 20px;
+  gap: 14px;
+  padding: 18px;
   border-radius: 22px;
   background:
     linear-gradient(160deg, rgba(56, 189, 248, 0.12), rgba(7, 89, 133, 0.06)),
