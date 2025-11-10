@@ -50,7 +50,7 @@ body.study-open {
 }
 
 #app {
-  width: min(420px, 100vw);
+  width: min(360px, 100vw);
   min-height: 100dvh;
   height: 100dvh;
   background: linear-gradient(180deg, rgba(10, 19, 38, 0.96), rgba(3, 9, 22, 0.94));
@@ -496,7 +496,7 @@ body.study-open {
   left: 50%;
   transform: translateX(-50%);
   width: 100%;
-  max-width: 420px;
+  max-width: 360px;
   background:
     linear-gradient(180deg, rgba(9, 17, 35, 0.95), rgba(4, 9, 20, 0.98));
   backdrop-filter: blur(18px);
