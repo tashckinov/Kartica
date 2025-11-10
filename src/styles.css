@@ -201,16 +201,17 @@ body.study-open {
 
 .topic-detail {
   display: grid;
-  gap: clamp(22px, 6vw, 36px);
-  padding: clamp(22px, 6vw, 38px) clamp(16px, 6vw, 30px) clamp(32px, 8vw, 48px);
+  gap: clamp(18px, 6vw, 36px);
+  padding: clamp(18px, 6vw, 38px) clamp(12px, 5.5vw, 30px) clamp(26px, 7vw, 48px);
+  min-width: 0;
 }
 
 .topic-detail-header {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: clamp(12px, 4vw, 18px);
-  padding: clamp(14px, 4.8vw, 20px);
+  padding: clamp(12px, 4.8vw, 20px);
   border-radius: 22px;
   background:
     linear-gradient(135deg, rgba(56, 189, 248, 0.14), rgba(8, 23, 56, 0.82)),
@@ -222,6 +223,7 @@ body.study-open {
 .topic-detail-titles {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .back-button {
@@ -263,18 +265,20 @@ body.study-open {
   margin: 4px 0 0;
   font-size: clamp(20px, 6vw, 26px);
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .topic-detail-subtitle {
   margin: 6px 0 0;
   color: var(--muted-text-color);
   font-size: clamp(13px, 3.8vw, 16px);
+  overflow-wrap: anywhere;
 }
 
 .topic-hero {
   display: grid;
-  gap: clamp(12px, 4vw, 20px);
-  padding: clamp(16px, 5vw, 24px);
+  gap: clamp(10px, 4vw, 20px);
+  padding: clamp(14px, 5vw, 24px);
   border-radius: 24px;
   background:
     linear-gradient(160deg, rgba(56, 189, 248, 0.18), rgba(12, 74, 110, 0.08)),
@@ -283,11 +287,17 @@ body.study-open {
   box-shadow: 0 26px 44px -30px var(--shadow-color);
 }
 
+.topic-hero,
+.topic-modes,
+.topic-cards {
+  min-width: 0;
+}
+
 .topic-hero img {
   width: 100%;
   border-radius: 18px;
   object-fit: cover;
-  max-height: 220px;
+  max-height: clamp(160px, 60vw, 220px);
   box-shadow: 0 24px 40px -30px color-mix(in srgb, var(--shadow-color) 70%, transparent);
 }
 
@@ -310,7 +320,7 @@ body.study-open {
 .topic-modes {
   display: grid;
   gap: clamp(12px, 4vw, 18px);
-  padding: clamp(16px, 5vw, 24px);
+  padding: clamp(14px, 5vw, 24px);
   border-radius: 22px;
   background:
     linear-gradient(150deg, rgba(56, 189, 248, 0.16), rgba(14, 116, 144, 0.08)),
@@ -357,7 +367,8 @@ body.study-open {
 .mode-title {
   font-size: clamp(14px, 4vw, 16px);
   font-weight: 600;
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .mode-subtitle {
@@ -373,7 +384,7 @@ body.study-open {
 .topic-cards {
   display: grid;
   gap: clamp(12px, 4vw, 18px);
-  padding: clamp(16px, 5vw, 24px);
+  padding: clamp(14px, 5vw, 24px);
   border-radius: 22px;
   background:
     linear-gradient(160deg, rgba(56, 189, 248, 0.12), rgba(7, 89, 133, 0.06)),
@@ -418,12 +429,13 @@ body.study-open {
   border: 1px solid color-mix(in srgb, var(--accent-color) 18%, var(--border-color));
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .flashcard img,
 .flashcard-image-placeholder {
   width: 100%;
-  height: 180px;
+  height: clamp(150px, 60vw, 180px);
   object-fit: cover;
 }
 
@@ -441,7 +453,7 @@ body.study-open {
 }
 
 .flashcard-content {
-  padding: clamp(14px, 4.5vw, 20px) clamp(16px, 5vw, 24px);
+  padding: clamp(12px, 4.5vw, 20px) clamp(14px, 5vw, 24px);
   display: grid;
   gap: clamp(6px, 2.8vw, 12px);
 }
