@@ -1,7 +1,11 @@
 const topics = [
   {
     id: 'serbian-lesson-1',
-    title: 'Сербский язык · Урок 1',
+    title: 'Сербский язык',
+    subtitle: 'Урок 1 · Приветствия',
+    description: 'Первые вежливые фразы, с которых начинается любое знакомство.',
+    coverImage:
+      'https://images.unsplash.com/photo-1522174010635-1c7a5de87c5d?auto=format&fit=crop&w=900&q=80',
     cards: [
       {
         id: 'card-1',
@@ -51,7 +55,7 @@ const navItems = [
   }
 ];
 
-const createFlashcard = (card, topicTitle) => {
+const createFlashcard = (card, { topicTitle, showTopic = false } = {}) => {
   const hasImage = Boolean(card.image);
   const hasOriginal = Boolean(card.original);
 
@@ -63,7 +67,11 @@ const createFlashcard = (card, topicTitle) => {
           : '<div class="flashcard-image-placeholder">Нет изображения</div>'
       }
       <div class="flashcard-content">
-        <span class="flashcard-topic">${topicTitle}</span>
+        ${
+          showTopic
+            ? `<span class="flashcard-topic">${topicTitle}</span>`
+            : ''
+        }
         <span class="flashcard-translation">${card.translation}</span>
         ${
           hasOriginal
@@ -75,28 +83,111 @@ const createFlashcard = (card, topicTitle) => {
   `;
 };
 
-const renderHome = () => {
+const createTopicCard = (topic) => {
+  const hasCover = Boolean(topic.coverImage);
+  const cardsCount = topic.cards.length;
+  const cardWord = cardsCount === 1 ? 'карточка' : cardsCount >= 2 && cardsCount <= 4 ? 'карточки' : 'карточек';
+
+  return `
+    <article class="topic-card" data-topic-card="${topic.id}" role="button" tabindex="0">
+      <div class="topic-card-cover">
+        ${
+          hasCover
+            ? `<img src="${topic.coverImage}" alt="${topic.title}" loading="lazy" />`
+            : '<div class="topic-card-placeholder" aria-hidden="true"></div>'
+        }
+        <span class="topic-card-badge">${cardsCount} ${cardWord}</span>
+      </div>
+      <div class="topic-card-body">
+        <h2 class="topic-card-title">${topic.title}</h2>
+        ${
+          topic.subtitle
+            ? `<p class="topic-card-subtitle">${topic.subtitle}</p>`
+            : ''
+        }
+      </div>
+    </article>
+  `;
+};
+
+const renderTopicDetail = (topic) => {
+  const hasCover = Boolean(topic.coverImage);
+
+  return `
+    <section class="topic-detail" data-topic-detail="${topic.id}">
+      <header class="topic-detail-header">
+        <button class="back-button" type="button" data-action="back-to-topics" aria-label="Вернуться к списку тем">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m15 6-6 6 6 6" />
+          </svg>
+        </button>
+        <div class="topic-detail-titles">
+          <span class="topic-detail-label">Тема</span>
+          <h1 class="topic-detail-title">${topic.title}</h1>
+          ${
+            topic.subtitle
+              ? `<p class="topic-detail-subtitle">${topic.subtitle}</p>`
+              : ''
+          }
+        </div>
+      </header>
+      <section class="topic-hero">
+        ${
+          hasCover
+            ? `<img src="${topic.coverImage}" alt="${topic.title}" loading="lazy" />`
+            : '<div class="topic-hero-placeholder">Добавьте обложку для темы</div>'
+        }
+        ${
+          topic.description
+            ? `<p class="topic-detail-description">${topic.description}</p>`
+            : ''
+        }
+      </section>
+      <section class="topic-modes">
+        <h2 class="topic-modes-title">Режимы</h2>
+        <div class="topic-modes-grid">
+          <button class="mode-button" type="button" data-mode="study">
+            <span class="mode-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 5a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" />
+                <path d="M14 3v5h5" />
+              </svg>
+            </span>
+            <span class="mode-content">
+              <span class="mode-title">Изучение</span>
+              <span class="mode-subtitle">Листайте карточки одну за другой</span>
+            </span>
+          </button>
+        </div>
+      </section>
+      <section class="topic-cards">
+        <div class="topic-cards-header">
+          <h2>Карточки</h2>
+          <span class="topic-cards-count">${topic.cards.length}</span>
+        </div>
+        <div class="card-list">
+          ${topic.cards
+            .map((card) => createFlashcard(card))
+            .join('')}
+        </div>
+      </section>
+    </section>
+  `;
+};
+
+const renderTopicsHome = () => {
   if (!topics.length) {
-    return `<div class="empty-state">Карточки появятся здесь, как только вы добавите новые темы.</div>`;
+    return `<div class="empty-state">Темы появятся здесь, как только вы добавите новую группу карточек.</div>`;
   }
 
   return `
     <header class="app-header">
       <h1 class="app-title">Изучаем языки с карточками</h1>
-      <p class="app-subtitle">Три карточки для первого знакомства с сербским языком.</p>
+      <p class="app-subtitle">Выберите тему, чтобы открыть карточки и начать обучение.</p>
     </header>
-    ${topics
-      .map(
-        (topic) => `
-          <section class="topic-section" data-topic="${topic.id}">
-            <h2 class="topic-title">${topic.title}</h2>
-            <div class="card-list">
-              ${topic.cards.map((card) => createFlashcard(card, topic.title)).join('')}
-            </div>
-          </section>
-        `
-      )
-      .join('')}
+    <section class="topics-grid">
+      ${topics.map((topic) => createTopicCard(topic)).join('')}
+    </section>
   `;
 };
 
@@ -142,6 +233,23 @@ export const createApp = (root) => {
   const main = root.querySelector('.app-main');
   const navButtons = Array.from(root.querySelectorAll('.nav-button'));
   let activeTab = 'home';
+  let activeTopicId = null;
+
+  const getActiveTopic = () => topics.find((topic) => topic.id === activeTopicId) || null;
+
+  const renderHome = () => {
+    if (!activeTopicId) {
+      return renderTopicsHome();
+    }
+
+    const topic = getActiveTopic();
+    if (!topic) {
+      activeTopicId = null;
+      return renderTopicsHome();
+    }
+
+    return renderTopicDetail(topic);
+  };
 
   const updateNav = () => {
     navButtons.forEach((button) => {
@@ -167,6 +275,55 @@ export const createApp = (root) => {
       activeTab = nextTab;
       render();
     });
+  });
+
+  const showTopic = (topicId) => {
+    activeTopicId = topicId;
+    if (activeTab !== 'home') {
+      activeTab = 'home';
+    }
+    render();
+  };
+
+  const showTopicsList = () => {
+    if (!activeTopicId) return;
+    activeTopicId = null;
+    render();
+  };
+
+  main.addEventListener('click', (event) => {
+    if (activeTab !== 'home') return;
+
+    const topicCard = event.target.closest('[data-topic-card]');
+    if (topicCard) {
+      showTopic(topicCard.dataset.topicCard);
+      return;
+    }
+
+    const backButton = event.target.closest('[data-action="back-to-topics"]');
+    if (backButton) {
+      showTopicsList();
+      return;
+    }
+
+    const modeButton = event.target.closest('[data-mode="study"]');
+    if (modeButton) {
+      const cardsSection = main.querySelector('.topic-cards');
+      if (cardsSection) {
+        cardsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  });
+
+  main.addEventListener('keydown', (event) => {
+    if (activeTab !== 'home') return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+
+    const topicCard = event.target.closest('[data-topic-card]');
+    if (topicCard) {
+      event.preventDefault();
+      showTopic(topicCard.dataset.topicCard);
+    }
   });
 
   render();
