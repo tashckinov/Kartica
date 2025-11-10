@@ -228,14 +228,147 @@ export const createApp = (root) => {
           .join('')}
       </div>
     </nav>
+    <div class="study-overlay" aria-hidden="true" hidden></div>
   `;
 
   const main = root.querySelector('.app-main');
   const navButtons = Array.from(root.querySelectorAll('.nav-button'));
+  const studyOverlay = root.querySelector('.study-overlay');
   let activeTab = 'home';
   let activeTopicId = null;
+  let studyState = {
+    isOpen: false,
+    topicId: null,
+    cardIndex: 0
+  };
 
   const getActiveTopic = () => topics.find((topic) => topic.id === activeTopicId) || null;
+  const getStudyTopic = () => topics.find((topic) => topic.id === studyState.topicId) || null;
+  const getStudyCard = () => {
+    const topic = getStudyTopic();
+    if (!topic) return null;
+    return topic.cards[studyState.cardIndex] || null;
+  };
+
+  const renderStudyOverlay = () => {
+    if (!studyState.isOpen) {
+      studyOverlay.setAttribute('hidden', '');
+      studyOverlay.setAttribute('aria-hidden', 'true');
+      studyOverlay.innerHTML = '';
+      document.body.classList.remove('study-open');
+      return;
+    }
+
+    const topic = getStudyTopic();
+    const card = getStudyCard();
+
+    if (!topic || !card) {
+      studyState = {
+        isOpen: false,
+        topicId: null,
+        cardIndex: 0
+      };
+      renderStudyOverlay();
+      return;
+    }
+
+    const hasImage = Boolean(card.image);
+    const totalCards = topic.cards.length;
+    const currentIndex = studyState.cardIndex + 1;
+
+    studyOverlay.innerHTML = `
+      <div class="study-dialog" role="dialog" aria-modal="true" aria-label="Изучение темы ${topic.title}" tabindex="-1">
+        <header class="study-header">
+          <div class="study-header-text">
+            <span class="study-topic">${topic.title}</span>
+            <span class="study-progress">${currentIndex} / ${totalCards}</span>
+          </div>
+          <button class="study-close" type="button" data-action="study-close" aria-label="Закрыть режим изучения">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 6 12 12" />
+              <path d="m18 6-12 12" />
+            </svg>
+          </button>
+        </header>
+        <section class="study-card" data-card="${card.id}">
+          ${
+            hasImage
+              ? `<img src="${card.image}" alt="${card.translation}" loading="lazy" />`
+              : '<div class="study-card-placeholder" aria-hidden="true">Нет изображения</div>'
+          }
+          <div class="study-card-content">
+            <span class="study-translation">${card.translation}</span>
+            ${
+              card.original
+                ? `<span class="study-original">${card.original}</span>`
+                : ''
+            }
+          </div>
+        </section>
+        <footer class="study-controls">
+          <button class="study-nav" type="button" data-action="study-prev" ${studyState.cardIndex === 0 ? 'disabled' : ''}>
+            Назад
+          </button>
+          <button class="study-nav" type="button" data-action="study-next" ${
+            studyState.cardIndex >= totalCards - 1 ? 'disabled' : ''
+          }>
+            Дальше
+          </button>
+        </footer>
+      </div>
+    `;
+
+    studyOverlay.removeAttribute('hidden');
+    studyOverlay.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('study-open');
+
+    const dialog = studyOverlay.querySelector('.study-dialog');
+    if (dialog) {
+      dialog.focus();
+    }
+  };
+
+  const closeStudyMode = () => {
+    if (!studyState.isOpen) return;
+    studyState = {
+      isOpen: false,
+      topicId: null,
+      cardIndex: 0
+    };
+    renderStudyOverlay();
+  };
+
+  const openStudyMode = (topicId, startIndex = 0) => {
+    const topic = topics.find((item) => item.id === topicId);
+    if (!topic) return;
+    const boundedIndex = Math.min(Math.max(startIndex, 0), topic.cards.length - 1);
+    studyState = {
+      isOpen: true,
+      topicId,
+      cardIndex: boundedIndex
+    };
+    renderStudyOverlay();
+  };
+
+  const showPrevCard = () => {
+    if (!studyState.isOpen || studyState.cardIndex === 0) return;
+    studyState = {
+      ...studyState,
+      cardIndex: studyState.cardIndex - 1
+    };
+    renderStudyOverlay();
+  };
+
+  const showNextCard = () => {
+    const topic = getStudyTopic();
+    if (!studyState.isOpen || !topic) return;
+    if (studyState.cardIndex >= topic.cards.length - 1) return;
+    studyState = {
+      ...studyState,
+      cardIndex: studyState.cardIndex + 1
+    };
+    renderStudyOverlay();
+  };
 
   const renderHome = () => {
     if (!activeTopicId) {
@@ -272,6 +405,7 @@ export const createApp = (root) => {
     button.addEventListener('click', () => {
       const nextTab = button.dataset.nav;
       if (nextTab === activeTab) return;
+      closeStudyMode();
       activeTab = nextTab;
       render();
     });
@@ -288,6 +422,7 @@ export const createApp = (root) => {
   const showTopicsList = () => {
     if (!activeTopicId) return;
     activeTopicId = null;
+    closeStudyMode();
     render();
   };
 
@@ -308,9 +443,8 @@ export const createApp = (root) => {
 
     const modeButton = event.target.closest('[data-mode="study"]');
     if (modeButton) {
-      const cardsSection = main.querySelector('.topic-cards');
-      if (cardsSection) {
-        cardsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (activeTopicId) {
+        openStudyMode(activeTopicId, 0);
       }
     }
   });
@@ -328,10 +462,41 @@ export const createApp = (root) => {
 
   render();
 
+  studyOverlay.addEventListener('click', (event) => {
+    const actionButton = event.target.closest('[data-action]');
+    if (!actionButton) return;
+    const { action } = actionButton.dataset;
+
+    if (action === 'study-close') {
+      closeStudyMode();
+    } else if (action === 'study-prev') {
+      showPrevCard();
+    } else if (action === 'study-next') {
+      showNextCard();
+    }
+  });
+
+  studyOverlay.addEventListener('keydown', (event) => {
+    if (!studyState.isOpen) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeStudyMode();
+    }
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      showPrevCard();
+    }
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      showNextCard();
+    }
+  });
+
   return {
     navigate: (tab) => {
       if (!['home', 'profile'].includes(tab)) return;
       activeTab = tab;
+      closeStudyMode();
       render();
     }
   };
