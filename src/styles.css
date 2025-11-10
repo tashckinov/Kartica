@@ -1,12 +1,16 @@
 :root {
-  --bg-color: #111827;
-  --text-color: #f9fafb;
-  --secondary-text-color: #9ca3af;
-  --accent-color: #f59e0b;
-  --card-bg: rgba(31, 41, 55, 0.85);
-  --shadow-color: rgba(15, 23, 42, 0.4);
-  --surface-color: rgba(17, 24, 39, 0.7);
-  --border-color: rgba(148, 163, 184, 0.2);
+  --bg-color: #050b1a;
+  --bg-gradient: radial-gradient(120% 120% at 50% 0%, #142a53 0%, #050b1a 60%, #020510 100%);
+  --text-color: #f8fafc;
+  --secondary-text-color: #cbd5f5;
+  --muted-text-color: #96a8d8;
+  --accent-color: #38bdf8;
+  --accent-soft: rgba(56, 189, 248, 0.18);
+  --accent-strong: rgba(56, 189, 248, 0.28);
+  --card-bg: rgba(15, 23, 42, 0.88);
+  --shadow-color: rgba(3, 7, 18, 0.65);
+  --surface-color: rgba(8, 13, 26, 0.82);
+  --border-color: rgba(73, 108, 181, 0.35);
   font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -16,11 +20,14 @@
 
 body {
   margin: 0;
-  background: var(--bg-color);
+  background: var(--bg-gradient);
+  background-color: var(--bg-color);
   color: var(--text-color);
   min-height: 100vh;
   display: flex;
   justify-content: center;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 body.study-open {
@@ -43,9 +50,12 @@ body.study-open {
   width: 100%;
   max-width: 420px;
   min-height: 100vh;
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.9));
+  background: linear-gradient(180deg, rgba(10, 19, 38, 0.96), rgba(3, 9, 22, 0.94));
   display: flex;
   flex-direction: column;
+  box-shadow: 0 32px 68px -36px var(--shadow-color);
+  border: 1px solid rgba(56, 189, 248, 0.08);
+  backdrop-filter: blur(10px);
 }
 
 .app-shell {
@@ -61,20 +71,26 @@ body.study-open {
 }
 
 .app-header {
-  padding: 24px 24px 16px;
+  padding: 32px 24px 24px;
+  display: grid;
+  gap: 12px;
+  background: linear-gradient(140deg, rgba(56, 189, 248, 0.14), rgba(10, 22, 46, 0.72));
+  border-bottom: 1px solid rgba(56, 189, 248, 0.12);
 }
 
 .app-title {
   margin: 0;
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .app-subtitle {
-  margin: 8px 0 0;
+  margin: 0;
   font-size: 15px;
-  color: var(--secondary-text-color);
-  line-height: 1.5;
+  color: var(--muted-text-color);
+  line-height: 1.6;
+  max-width: 32ch;
 }
 
 .card-list {
@@ -85,40 +101,45 @@ body.study-open {
 .topics-grid {
   display: grid;
   gap: 20px;
-  padding: 0 24px 32px;
+  padding: 28px 24px 36px;
 }
 
 .topic-card {
+  position: relative;
   display: grid;
-  gap: 16px;
-  padding: 16px;
-  border-radius: 20px;
-  background: var(--surface-color);
-  border: 1px solid var(--border-color);
-  box-shadow: 0 18px 34px -24px var(--shadow-color);
+  gap: 18px;
+  padding: 18px;
+  border-radius: 22px;
+  background:
+    linear-gradient(150deg, rgba(56, 189, 248, 0.16), rgba(99, 102, 241, 0.06)),
+    color-mix(in srgb, var(--surface-color) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 24%, var(--border-color));
+  box-shadow: 0 28px 44px -30px var(--shadow-color);
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
   text-align: left;
+  overflow: hidden;
 }
 
 .topic-card:focus,
 .topic-card:hover {
   outline: none;
-  transform: translateY(-2px);
-  border-color: var(--accent-color);
-  box-shadow: 0 24px 36px -18px var(--shadow-color);
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--accent-color) 60%, var(--border-color));
+  box-shadow: 0 36px 48px -28px color-mix(in srgb, var(--shadow-color) 88%, transparent);
 }
 
 .topic-card-cover {
   position: relative;
-  border-radius: 16px;
+  border-radius: 18px;
   overflow: hidden;
-  background: radial-gradient(circle at top, rgba(245, 158, 11, 0.3), transparent),
-    linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.95));
   aspect-ratio: 16 / 9;
   display: flex;
   align-items: center;
   justify-content: center;
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.3), rgba(15, 23, 42, 0.82)),
+    color-mix(in srgb, var(--surface-color) 96%, transparent);
 }
 
 .topic-card-cover img {
@@ -130,8 +151,10 @@ body.study-open {
 .topic-card-placeholder {
   width: 100%;
   height: 100%;
-  background: repeating-linear-gradient(135deg, rgba(148, 163, 184, 0.15), rgba(148, 163, 184, 0.15) 12px, transparent 12px, transparent 24px);
-  border-radius: 16px;
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.28), rgba(56, 189, 248, 0)),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.06) 14px, transparent 14px, transparent 28px);
 }
 
 .topic-card-badge {
@@ -140,11 +163,12 @@ body.study-open {
   bottom: 12px;
   padding: 6px 12px;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.82);
+  background: color-mix(in srgb, var(--surface-color) 92%, transparent);
+  border: 1px solid rgba(56, 189, 248, 0.35);
   color: var(--text-color);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -161,14 +185,14 @@ body.study-open {
 
 .topic-card-subtitle {
   margin: 0;
-  color: var(--secondary-text-color);
+  color: var(--muted-text-color);
   font-size: 14px;
 }
 
 .topic-detail {
   display: grid;
-  gap: 28px;
-  padding: 24px 24px 32px;
+  gap: 32px;
+  padding: 28px 24px 48px;
 }
 
 .topic-detail-header {
@@ -176,6 +200,13 @@ body.study-open {
   grid-template-columns: auto 1fr;
   align-items: center;
   gap: 16px;
+  padding: 18px;
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.14), rgba(8, 23, 56, 0.82)),
+    color-mix(in srgb, var(--surface-color) 96%, transparent);
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  box-shadow: 0 28px 48px -30px var(--shadow-color);
 }
 
 .topic-detail-titles {
@@ -186,15 +217,16 @@ body.study-open {
 .back-button {
   width: 44px;
   height: 44px;
-  border-radius: 12px;
-  border: 1px solid var(--border-color);
-  background: var(--surface-color);
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 18%, var(--border-color));
+  background: color-mix(in srgb, var(--surface-color) 94%, transparent);
   color: inherit;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: border-color 0.2s ease, transform 0.2s ease;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 16px 30px -22px var(--shadow-color);
 }
 
 .back-button svg {
@@ -205,15 +237,16 @@ body.study-open {
 .back-button:focus,
 .back-button:hover {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: color-mix(in srgb, var(--accent-color) 70%, var(--border-color));
   transform: translateX(-2px);
+  box-shadow: 0 20px 36px -26px color-mix(in srgb, var(--shadow-color) 86%, transparent);
 }
 
 .topic-detail-label {
   font-size: 12px;
   text-transform: uppercase;
-  color: var(--secondary-text-color);
-  letter-spacing: 0.12em;
+  color: var(--muted-text-color);
+  letter-spacing: 0.16em;
 }
 
 .topic-detail-title {
@@ -224,40 +257,56 @@ body.study-open {
 
 .topic-detail-subtitle {
   margin: 6px 0 0;
-  color: var(--secondary-text-color);
+  color: var(--muted-text-color);
   font-size: 15px;
 }
 
 .topic-hero {
   display: grid;
   gap: 16px;
+  padding: 20px;
+  border-radius: 24px;
+  background:
+    linear-gradient(160deg, rgba(56, 189, 248, 0.18), rgba(12, 74, 110, 0.08)),
+    color-mix(in srgb, var(--surface-color) 96%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 20%, var(--border-color));
+  box-shadow: 0 26px 44px -30px var(--shadow-color);
 }
 
 .topic-hero img {
   width: 100%;
-  border-radius: 20px;
+  border-radius: 18px;
   object-fit: cover;
   max-height: 220px;
+  box-shadow: 0 24px 40px -30px color-mix(in srgb, var(--shadow-color) 70%, transparent);
 }
 
 .topic-hero-placeholder {
-  border-radius: 20px;
+  border-radius: 18px;
   padding: 32px;
-  border: 1px dashed var(--border-color);
-  color: var(--secondary-text-color);
+  border: 1px dashed color-mix(in srgb, var(--accent-color) 32%, var(--border-color));
+  color: var(--muted-text-color);
   text-align: center;
-  background: rgba(15, 23, 42, 0.4);
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.14), rgba(56, 189, 248, 0));
 }
 
 .topic-detail-description {
   margin: 0;
   color: var(--secondary-text-color);
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
 .topic-modes {
   display: grid;
   gap: 16px;
+  padding: 20px;
+  border-radius: 22px;
+  background:
+    linear-gradient(150deg, rgba(56, 189, 248, 0.16), rgba(14, 116, 144, 0.08)),
+    color-mix(in srgb, var(--surface-color) 96%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 22%, var(--border-color));
+  box-shadow: 0 28px 44px -30px var(--shadow-color);
 }
 
 .topic-modes-title {
@@ -275,23 +324,25 @@ body.study-open {
   width: 100%;
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 14px;
+  gap: 16px;
   align-items: center;
-  padding: 16px;
-  border-radius: 16px;
-  border: 1px solid var(--border-color);
-  background: var(--card-bg);
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 26%, var(--border-color));
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.16), rgba(56, 189, 248, 0)),
+    color-mix(in srgb, var(--card-bg) 96%, transparent);
   color: inherit;
   cursor: pointer;
-  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
 .mode-button:focus,
 .mode-button:hover {
   outline: none;
-  transform: translateY(-2px);
-  border-color: var(--accent-color);
-  box-shadow: 0 18px 30px -18px var(--shadow-color);
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--accent-color) 70%, var(--border-color));
+  box-shadow: 0 26px 40px -26px color-mix(in srgb, var(--shadow-color) 88%, transparent);
 }
 
 .mode-content {
@@ -301,10 +352,12 @@ body.study-open {
 }
 
 .mode-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: rgba(245, 158, 11, 0.15);
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.18), rgba(56, 189, 248, 0)),
+    rgba(56, 189, 248, 0.08);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -325,12 +378,19 @@ body.study-open {
   display: block;
   margin-top: 4px;
   font-size: 13px;
-  color: var(--secondary-text-color);
+  color: var(--muted-text-color);
 }
 
 .topic-cards {
   display: grid;
   gap: 16px;
+  padding: 20px;
+  border-radius: 22px;
+  background:
+    linear-gradient(160deg, rgba(56, 189, 248, 0.12), rgba(7, 89, 133, 0.06)),
+    color-mix(in srgb, var(--surface-color) 96%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 18%, var(--border-color));
+  box-shadow: 0 28px 44px -30px var(--shadow-color);
 }
 
 .topic-cards-header {
@@ -353,18 +413,20 @@ body.study-open {
   height: 32px;
   padding: 0 12px;
   border-radius: 999px;
-  background: rgba(245, 158, 11, 0.18);
+  background: var(--accent-soft);
   color: var(--accent-color);
   font-size: 13px;
   font-weight: 600;
 }
 
 .flashcard {
-  border-radius: 18px;
-  background: var(--card-bg);
-  box-shadow: 0 24px 42px -20px var(--shadow-color);
+  border-radius: 20px;
+  background:
+    linear-gradient(150deg, rgba(56, 189, 248, 0.14), rgba(56, 189, 248, 0)),
+    color-mix(in srgb, var(--card-bg) 96%, transparent);
+  box-shadow: 0 30px 48px -28px var(--shadow-color);
   overflow: hidden;
-  border: 1px solid var(--border-color);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 18%, var(--border-color));
   display: flex;
   flex-direction: column;
 }
@@ -380,11 +442,12 @@ body.study-open {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle at top, rgba(245, 158, 11, 0.35), transparent),
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.22), rgba(2, 132, 199, 0.08)),
     linear-gradient(135deg, rgba(15, 23, 42, 0.6), rgba(15, 23, 42, 0.9));
   color: var(--accent-color);
-  font-size: 14px;
-  letter-spacing: 0.12em;
+  font-size: 13px;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
@@ -397,6 +460,7 @@ body.study-open {
 .flashcard-translation {
   font-size: 20px;
   font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .flashcard-original {
@@ -407,8 +471,8 @@ body.study-open {
 .flashcard-topic {
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--secondary-text-color);
+  letter-spacing: 0.1em;
+  color: var(--muted-text-color);
 }
 
 .profile-screen {
@@ -418,12 +482,15 @@ body.study-open {
 }
 
 .profile-card {
-  background: var(--surface-color);
-  border-radius: 16px;
+  background:
+    linear-gradient(150deg, rgba(56, 189, 248, 0.12), rgba(56, 189, 248, 0)),
+    color-mix(in srgb, var(--surface-color) 96%, transparent);
+  border-radius: 18px;
   padding: 20px;
-  border: 1px solid var(--border-color);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 18%, var(--border-color));
   display: grid;
   gap: 8px;
+  box-shadow: 0 24px 40px -30px var(--shadow-color);
 }
 
 .profile-card h2,
@@ -434,7 +501,7 @@ body.study-open {
 .profile-card ul {
   margin: 0;
   padding-left: 20px;
-  color: var(--secondary-text-color);
+  color: var(--muted-text-color);
   display: grid;
   gap: 6px;
 }
@@ -446,9 +513,12 @@ body.study-open {
   transform: translateX(-50%);
   width: 100%;
   max-width: 420px;
-  background: rgba(15, 23, 42, 0.92);
-  backdrop-filter: blur(12px);
-  border-top: 1px solid var(--border-color);
+  background:
+    linear-gradient(180deg, rgba(9, 17, 35, 0.95), rgba(4, 9, 20, 0.98));
+  backdrop-filter: blur(18px);
+  border-top: 1px solid color-mix(in srgb, var(--accent-color) 16%, var(--border-color));
+  box-shadow: 0 -18px 42px -28px var(--shadow-color);
+  padding-bottom: max(env(safe-area-inset-bottom), 8px);
 }
 
 .nav-items {
@@ -460,7 +530,7 @@ body.study-open {
   appearance: none;
   border: none;
   background: none;
-  color: var(--secondary-text-color);
+  color: var(--muted-text-color);
   padding: 12px 8px 16px;
   font-size: 13px;
   font-weight: 600;
@@ -485,7 +555,7 @@ body.study-open {
   margin: 0 auto;
   width: 48px;
   height: 4px;
-  background: var(--accent-color);
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.1), rgba(56, 189, 248, 0.9), rgba(56, 189, 248, 0.1));
   border-radius: 999px;
   transform: scaleX(0);
   transition: transform 0.2s ease;
@@ -498,7 +568,7 @@ body.study-open {
 .empty-state {
   padding: 32px 24px;
   text-align: center;
-  color: var(--secondary-text-color);
+  color: var(--muted-text-color);
 }
 
 .study-overlay {
@@ -507,10 +577,11 @@ body.study-open {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
-  background: rgba(17, 24, 39, 0.82);
-  background: color-mix(in srgb, var(--bg-color) 80%, transparent);
-  backdrop-filter: blur(18px);
+  padding: clamp(16px, 4vw, 32px);
+  background:
+    radial-gradient(120% 120% at 50% 0%, rgba(56, 189, 248, 0.12), transparent),
+    color-mix(in srgb, var(--bg-color) 85%, transparent);
+  backdrop-filter: blur(22px);
   z-index: 100;
 }
 
@@ -522,29 +593,31 @@ body.study-open {
 .study-dialog {
   width: min(480px, 100%);
   max-height: min(720px, 100%);
-  background: var(--surface-color);
-  border-radius: 24px;
-  box-shadow: 0 24px 48px -16px rgba(15, 23, 42, 0.55);
-  box-shadow: 0 24px 48px -16px color-mix(in srgb, var(--shadow-color) 55%, transparent);
+  background:
+    linear-gradient(160deg, rgba(56, 189, 248, 0.14), rgba(8, 24, 56, 0.86)),
+    color-mix(in srgb, var(--surface-color) 96%, transparent);
+  border-radius: 26px;
+  box-shadow: 0 40px 72px -34px color-mix(in srgb, var(--shadow-color) 85%, transparent);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid rgba(148, 163, 184, 0.6);
-  border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 22%, var(--border-color));
 }
 
 .study-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 20px 16px;
+  padding: 22px 24px 18px;
   gap: 16px;
+  background: color-mix(in srgb, var(--surface-color) 92%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-color) 16%, var(--border-color));
 }
 
 .study-header-text {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .study-topic {
@@ -554,21 +627,23 @@ body.study-open {
 
 .study-progress {
   font-size: 13px;
-  color: var(--secondary-text-color);
+  color: var(--muted-text-color);
 }
 
 .study-close {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: 999px;
-  border: none;
-  background: rgba(255, 255, 255, 0.08);
-  background: color-mix(in srgb, var(--surface-color) 65%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 28%, transparent);
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(56, 189, 248, 0)),
+    color-mix(in srgb, var(--surface-color) 88%, transparent);
   color: var(--text-color);
   display: grid;
   place-items: center;
   cursor: pointer;
-  transition: background-color 0.2s ease, transform 0.2s ease;
+  transition: background-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 18px 36px -26px color-mix(in srgb, var(--shadow-color) 80%, transparent);
 }
 
 .study-close svg {
@@ -577,7 +652,7 @@ body.study-open {
 }
 
 .study-close:active {
-  transform: scale(0.96);
+  transform: scale(0.94);
 }
 
 .study-card-wrapper {
@@ -585,7 +660,7 @@ body.study-open {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 20px 24px;
+  padding: 0 24px 28px;
 }
 
 .study-card {
@@ -631,15 +706,17 @@ body.study-open {
   text-align: center;
   border-radius: 24px;
   padding: clamp(20px, 4vw, 28px);
-  background: color-mix(in srgb, var(--card-bg) 92%, transparent);
-  box-shadow: 0 24px 48px -20px rgba(15, 23, 42, 0.6);
-  box-shadow: 0 24px 48px -20px color-mix(in srgb, var(--shadow-color) 65%, transparent);
+  background:
+    linear-gradient(160deg, rgba(56, 189, 248, 0.16), rgba(8, 22, 52, 0.85)),
+    color-mix(in srgb, var(--card-bg) 96%, transparent);
+  box-shadow: 0 32px 60px -28px color-mix(in srgb, var(--shadow-color) 80%, transparent);
   backface-visibility: hidden;
   transform-style: preserve-3d;
 }
 
 .study-card-front {
-  background: linear-gradient(160deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.82));
+  background:
+    linear-gradient(160deg, rgba(56, 189, 248, 0.18), rgba(8, 22, 52, 0.88));
 }
 
 .study-card-back {
@@ -652,19 +729,20 @@ body.study-open {
   text-transform: uppercase;
   letter-spacing: 0.14em;
   font-weight: 600;
-  color: var(--secondary-text-color);
+  color: var(--muted-text-color);
 }
 
 .study-face-text {
   font-size: clamp(26px, 6vw, 34px);
   font-weight: 700;
   line-height: 1.2;
+  letter-spacing: -0.01em;
 }
 
 .study-face-helper,
 .study-face-hint {
   font-size: 14px;
-  color: var(--secondary-text-color);
+  color: var(--muted-text-color);
 }
 
 .study-face-hint {
@@ -676,8 +754,8 @@ body.study-open {
   max-width: 320px;
   border-radius: 18px;
   overflow: hidden;
-  box-shadow: 0 18px 42px -22px rgba(15, 23, 42, 0.6);
-  box-shadow: 0 18px 42px -22px color-mix(in srgb, var(--shadow-color) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 24%, transparent);
+  box-shadow: 0 26px 48px -26px color-mix(in srgb, var(--shadow-color) 70%, transparent);
 }
 
 .study-back-media img {
@@ -691,14 +769,14 @@ body.study-open {
   width: min(100%, 320px);
   min-height: 200px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.04);
-  background: color-mix(in srgb, var(--surface-color) 55%, transparent);
-  border: 1px dashed rgba(148, 163, 184, 0.6);
-  border: 1px dashed color-mix(in srgb, var(--border-color) 80%, transparent);
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.16), rgba(56, 189, 248, 0)),
+    color-mix(in srgb, var(--surface-color) 70%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent-color) 40%, var(--border-color));
   display: grid;
   place-items: center;
   font-size: 14px;
-  color: var(--secondary-text-color);
+  color: var(--muted-text-color);
   padding: 24px;
 }
 
@@ -706,22 +784,23 @@ body.study-open {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
-  padding: 20px;
-  background: rgba(15, 23, 42, 0.55);
-  background: color-mix(in srgb, var(--card-bg) 85%, transparent);
-  border-top: 1px solid rgba(148, 163, 184, 0.55);
-  border-top: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent);
+  padding: 22px 24px 26px;
+  background:
+    linear-gradient(180deg, rgba(9, 23, 54, 0.88), rgba(3, 10, 24, 0.94));
+  border-top: 1px solid color-mix(in srgb, var(--accent-color) 18%, var(--border-color));
 }
 
 .study-nav {
   padding: 14px 16px;
   font-size: 16px;
   font-weight: 600;
-  border-radius: 14px;
+  border-radius: 16px;
   border: none;
   cursor: pointer;
-  background: var(--accent-color);
-  color: #fff;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent-color) 92%, #ffffff 0%), color-mix(in srgb, var(--accent-color) 70%, #020510 0%));
+  color: color-mix(in srgb, #0b1120 75%, #ffffff 25%);
+  box-shadow: 0 22px 36px -20px color-mix(in srgb, var(--accent-color) 50%, transparent);
   transition: transform 0.2s ease, filter 0.2s ease;
 }
 
@@ -731,11 +810,10 @@ body.study-open {
 
 .study-nav[disabled] {
   cursor: not-allowed;
-  background: rgba(245, 158, 11, 0.35);
-  background: color-mix(in srgb, var(--accent-color) 35%, transparent);
-  color: rgba(255, 255, 255, 0.6);
-  color: color-mix(in srgb, #ffffff 40%, transparent);
-  filter: saturate(0.75);
+  background: color-mix(in srgb, var(--accent-color) 25%, transparent);
+  color: color-mix(in srgb, #0b1120 40%, #ffffff 60%);
+  box-shadow: none;
+  filter: saturate(0.6);
 }
 
 @media (max-width: 480px) {
@@ -761,13 +839,17 @@ body.study-open {
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg-color: #f2f5f9;
+    --bg-color: #edf2fb;
+    --bg-gradient: radial-gradient(120% 120% at 50% 0%, #d2e3ff 0%, #edf2fb 60%, #d9e4ff 100%);
     --text-color: #0f172a;
     --secondary-text-color: #475569;
-    --accent-color: #d97706;
-    --card-bg: rgba(255, 255, 255, 0.9);
-    --shadow-color: rgba(15, 23, 42, 0.12);
-    --surface-color: rgba(255, 255, 255, 0.75);
+    --muted-text-color: #64748b;
+    --accent-color: #0284c7;
+    --accent-soft: rgba(2, 132, 199, 0.18);
+    --accent-strong: rgba(2, 132, 199, 0.28);
+    --card-bg: rgba(255, 255, 255, 0.94);
+    --shadow-color: rgba(15, 23, 42, 0.14);
+    --surface-color: rgba(255, 255, 255, 0.88);
     --border-color: rgba(148, 163, 184, 0.35);
   }
 }
