@@ -24,7 +24,7 @@ const topics = [
       {
         id: 'card-3',
         translation: 'До скорого',
-        original: null,
+        original: 'Vidimo se uskoro',
         image: null
       }
     ]
@@ -239,7 +239,8 @@ export const createApp = (root) => {
   let studyState = {
     isOpen: false,
     topicId: null,
-    cardIndex: 0
+    cardIndex: 0,
+    isFlipped: false
   };
 
   const getActiveTopic = () => topics.find((topic) => topic.id === activeTopicId) || null;
@@ -248,6 +249,14 @@ export const createApp = (root) => {
     const topic = getStudyTopic();
     if (!topic) return null;
     return topic.cards[studyState.cardIndex] || null;
+  };
+
+  const applyStudyFlipState = () => {
+    const studyCard = studyOverlay.querySelector('.study-card');
+    if (!studyCard) return;
+    const isFlipped = studyState.isFlipped ? 'true' : 'false';
+    studyCard.dataset.flipped = isFlipped;
+    studyCard.setAttribute('aria-pressed', isFlipped);
   };
 
   const renderStudyOverlay = () => {
@@ -266,7 +275,8 @@ export const createApp = (root) => {
       studyState = {
         isOpen: false,
         topicId: null,
-        cardIndex: 0
+        cardIndex: 0,
+        isFlipped: false
       };
       renderStudyOverlay();
       return;
@@ -275,6 +285,8 @@ export const createApp = (root) => {
     const hasImage = Boolean(card.image);
     const totalCards = topic.cards.length;
     const currentIndex = studyState.cardIndex + 1;
+
+    const promptText = card.original || card.translation;
 
     studyOverlay.innerHTML = `
       <div class="study-dialog" role="dialog" aria-modal="true" aria-label="Изучение темы ${topic.title}" tabindex="-1">
@@ -290,20 +302,31 @@ export const createApp = (root) => {
             </svg>
           </button>
         </header>
-        <section class="study-card" data-card="${card.id}">
-          ${
-            hasImage
-              ? `<img src="${card.image}" alt="${card.translation}" loading="lazy" />`
-              : '<div class="study-card-placeholder" aria-hidden="true">Нет изображения</div>'
-          }
-          <div class="study-card-content">
-            <span class="study-translation">${card.translation}</span>
-            ${
-              card.original
-                ? `<span class="study-original">${card.original}</span>`
-                : ''
-            }
-          </div>
+        <section class="study-card-wrapper">
+          <button class="study-card" type="button" data-card="${card.id}" data-flipped="false" aria-pressed="false" aria-label="Перевернуть карточку">
+            <span class="visually-hidden">Нажмите, чтобы перевернуть карточку и показать перевод.</span>
+            <div class="study-card-inner">
+              <div class="study-card-face study-card-front">
+                <span class="study-face-label">Слово</span>
+                <span class="study-face-text">${promptText}</span>
+                <span class="study-face-hint">Нажмите на карточку, чтобы увидеть перевод</span>
+              </div>
+              <div class="study-card-face study-card-back">
+                <span class="study-face-label">Перевод</span>
+                <span class="study-face-text">${card.translation}</span>
+                ${
+                  hasImage
+                    ? `<div class="study-back-media"><img src="${card.image}" alt="${card.translation}" loading="lazy" /></div>`
+                    : '<div class="study-card-placeholder" aria-hidden="true">Нет изображения</div>'
+                }
+                ${
+                  card.original
+                    ? `<span class="study-face-helper">Оригинал: ${card.original}</span>`
+                    : ''
+                }
+              </div>
+            </div>
+          </button>
         </section>
         <footer class="study-controls">
           <button class="study-nav" type="button" data-action="study-prev" ${studyState.cardIndex === 0 ? 'disabled' : ''}>
@@ -326,6 +349,8 @@ export const createApp = (root) => {
     if (dialog) {
       dialog.focus();
     }
+
+    applyStudyFlipState();
   };
 
   const closeStudyMode = () => {
@@ -333,7 +358,8 @@ export const createApp = (root) => {
     studyState = {
       isOpen: false,
       topicId: null,
-      cardIndex: 0
+      cardIndex: 0,
+      isFlipped: false
     };
     renderStudyOverlay();
   };
@@ -345,7 +371,8 @@ export const createApp = (root) => {
     studyState = {
       isOpen: true,
       topicId,
-      cardIndex: boundedIndex
+      cardIndex: boundedIndex,
+      isFlipped: false
     };
     renderStudyOverlay();
   };
@@ -354,7 +381,8 @@ export const createApp = (root) => {
     if (!studyState.isOpen || studyState.cardIndex === 0) return;
     studyState = {
       ...studyState,
-      cardIndex: studyState.cardIndex - 1
+      cardIndex: studyState.cardIndex - 1,
+      isFlipped: false
     };
     renderStudyOverlay();
   };
@@ -365,9 +393,19 @@ export const createApp = (root) => {
     if (studyState.cardIndex >= topic.cards.length - 1) return;
     studyState = {
       ...studyState,
-      cardIndex: studyState.cardIndex + 1
+      cardIndex: studyState.cardIndex + 1,
+      isFlipped: false
     };
     renderStudyOverlay();
+  };
+
+  const toggleStudyCard = () => {
+    if (!studyState.isOpen) return;
+    studyState = {
+      ...studyState,
+      isFlipped: !studyState.isFlipped
+    };
+    applyStudyFlipState();
   };
 
   const renderHome = () => {
@@ -476,6 +514,13 @@ export const createApp = (root) => {
     }
   });
 
+  studyOverlay.addEventListener('click', (event) => {
+    const studyCard = event.target.closest('.study-card');
+    if (!studyCard) return;
+    event.preventDefault();
+    toggleStudyCard();
+  });
+
   studyOverlay.addEventListener('keydown', (event) => {
     if (!studyState.isOpen) return;
     if (event.key === 'Escape') {
@@ -489,6 +534,10 @@ export const createApp = (root) => {
     if (event.key === 'ArrowRight') {
       event.preventDefault();
       showNextCard();
+    }
+    if ((event.key === 'Enter' || event.key === ' ') && event.target.closest('.study-card')) {
+      event.preventDefault();
+      toggleStudyCard();
     }
   });
 
