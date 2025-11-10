@@ -502,6 +502,11 @@ body.study-open {
   z-index: 100;
 }
 
+.study-overlay[hidden] {
+  display: none !important;
+  pointer-events: none;
+}
+
 .study-dialog {
   width: min(480px, 100%);
   max-height: min(720px, 100%);
