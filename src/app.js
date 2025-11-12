@@ -1,35 +1,19 @@
-const topics = [
-  {
-    id: 'serbian-lesson-1',
-    title: 'Сербский язык',
-    subtitle: 'Урок 1 · Приветствия',
-    description: 'Первые вежливые фразы, с которых начинается любое знакомство.',
-    coverImage:
-      'https://images.unsplash.com/photo-1522174010635-1c7a5de87c5d?auto=format&fit=crop&w=900&q=80',
-    cards: [
-      {
-        id: 'card-1',
-        translation: 'Доброе утро',
-        original: 'Dobro jutro',
-        image:
-          'https://images.unsplash.com/photo-1543353071-10c8ba85a904?auto=format&fit=crop&w=800&q=80'
-      },
-      {
-        id: 'card-2',
-        translation: 'Спасибо',
-        original: 'Hvala',
-        image:
-          'https://images.unsplash.com/photo-1546707012-85f2643599a0?auto=format&fit=crop&w=800&q=80'
-      },
-      {
-        id: 'card-3',
-        translation: 'До скорого',
-        original: 'Vidimo se uskoro',
-        image: null
-      }
-    ]
-  }
-];
+let topics = [];
+
+const topicsStatus = {
+  isLoading: true,
+  error: null
+};
+
+const setTopics = (nextTopics = []) => {
+  topics = Array.isArray(nextTopics) ? nextTopics : [];
+};
+
+const updateTopicsStatus = (patch) => {
+  Object.assign(topicsStatus, patch);
+};
+
+const getTopicsStatus = () => ({ ...topicsStatus });
 
 const navItems = [
   {
@@ -54,6 +38,23 @@ const navItems = [
     `
   }
 ];
+
+const mapApiCard = (card) => ({
+  id: `card-${card.id}`,
+  translation: card.translation,
+  original: card.original || null,
+  image: card.image || null
+});
+
+const mapApiGroup = (group) => ({
+  id: `group-${group.id}`,
+  groupId: group.id,
+  title: group.name,
+  subtitle: group.subtitle || null,
+  description: group.description || null,
+  coverImage: group.coverImage || null,
+  cards: Array.isArray(group.cards) ? group.cards.map(mapApiCard) : []
+});
 
 const createFlashcard = (card, { topicTitle, showTopic = false } = {}) => {
   const hasImage = Boolean(card.image);
@@ -168,8 +169,18 @@ const renderTopicDetail = (topic) => {
 };
 
 const renderTopicsHome = () => {
+  const { isLoading, error } = getTopicsStatus();
+
+  if (isLoading) {
+    return `<div class="info-state" data-state="loading">Загружаем карточки...</div>`;
+  }
+
+  if (error) {
+    return `<div class="info-state" data-state="error">Не удалось загрузить данные. ${error}</div>`;
+  }
+
   if (!topics.length) {
-    return `<div class="empty-state">Темы появятся здесь, как только вы добавите новую группу карточек.</div>`;
+    return `<div class="info-state">Темы появятся здесь, как только вы добавите новую группу карточек.</div>`;
   }
 
   return `
@@ -183,22 +194,85 @@ const renderTopicsHome = () => {
   `;
 };
 
-const renderProfile = () => `
-  <div class="profile-screen">
-    <div class="profile-card">
-      <h2>Профиль</h2>
-      <p>Здесь появится информация об успехах и прогрессе.</p>
+const renderProfile = (messages = {}) => {
+  const hasTopics = topics.length > 0;
+  const options = topics
+    .map((topic) => `<option value="${topic.groupId}">${topic.title}</option>`)
+    .join('');
+  const groupMessage = messages.createGroup || null;
+  const cardMessage = messages.createCard || null;
+
+  const renderFormFeedback = (message) => {
+    if (!message) {
+      return '<p class="form-feedback" data-feedback hidden></p>';
+    }
+    return `<p class="form-feedback" data-feedback data-variant="${message.variant}">${message.text}</p>`;
+  };
+
+  return `
+    <div class="profile-screen">
+      <div class="profile-card">
+        <h2>Управление карточками</h2>
+        <p>Создавайте группы карточек и пополняйте их новыми фразами.</p>
+      </div>
+      <div class="profile-card">
+        <h3>Новая группа</h3>
+        <form class="manage-form" data-form="create-group">
+          <label class="manage-field">
+            <span>Название *</span>
+            <input type="text" name="name" required placeholder="Например, English B1" />
+          </label>
+          <label class="manage-field">
+            <span>Подзаголовок</span>
+            <input type="text" name="subtitle" placeholder="Краткое описание" />
+          </label>
+          <label class="manage-field">
+            <span>Описание</span>
+            <textarea name="description" rows="3" placeholder="Расскажите, что внутри группы"></textarea>
+          </label>
+          <label class="manage-field">
+            <span>Ссылка на обложку</span>
+            <input type="url" name="coverImage" placeholder="https://..." />
+          </label>
+          <button type="submit" class="manage-submit">Создать группу</button>
+          ${renderFormFeedback(groupMessage)}
+        </form>
+      </div>
+      <div class="profile-card">
+        <h3>Новая карточка</h3>
+        ${
+          hasTopics
+            ? `
+                <form class="manage-form" data-form="create-card">
+                  <label class="manage-field">
+                    <span>Группа *</span>
+                    <select name="groupId" required>
+                      <option value="" disabled selected>Выберите группу</option>
+                      ${options}
+                    </select>
+                  </label>
+                  <label class="manage-field">
+                    <span>Оригинал</span>
+                    <input type="text" name="original" placeholder="Например, break down" />
+                  </label>
+                  <label class="manage-field">
+                    <span>Перевод *</span>
+                    <input type="text" name="translation" required placeholder="Например, сломаться" />
+                  </label>
+                  <label class="manage-field">
+                    <span>Ссылка на изображение</span>
+                    <input type="url" name="image" placeholder="https://..." />
+                  </label>
+                  <button type="submit" class="manage-submit">Добавить карточку</button>
+                  ${renderFormFeedback(cardMessage)}
+                </form>
+              `
+            : '<p class="info-state">Создайте хотя бы одну группу, чтобы добавлять карточки.</p>'
+        }
+      </div>
     </div>
-    <div class="profile-card">
-      <h3>Советы</h3>
-      <ul>
-        <li>Повторяйте карточки каждый день.</li>
-        <li>Добавляйте свои темы, когда появится возможность.</li>
-        <li>Используйте приложение в Telegram mini app для синхронизации.</li>
-      </ul>
-    </div>
-  </div>
-`;
+  `;
+};
 
 export const createApp = (root) => {
   root.innerHTML = `
@@ -228,6 +302,10 @@ export const createApp = (root) => {
   const studyOverlay = root.querySelector('.study-overlay');
   let activeTab = 'home';
   let activeTopicId = null;
+  let profileMessages = {
+    createGroup: null,
+    createCard: null
+  };
   let studyState = {
     isOpen: false,
     topicId: null,
@@ -400,6 +478,155 @@ export const createApp = (root) => {
     applyStudyFlipState();
   };
 
+  const setProfileFeedback = (type, text, variant = 'info') => {
+    profileMessages = {
+      ...profileMessages,
+      [type]: text
+        ? {
+            text,
+            variant
+          }
+        : null
+    };
+  };
+
+  const ensureActiveTopicIsValid = () => {
+    if (!activeTopicId) return;
+    const exists = topics.some((topic) => topic.id === activeTopicId);
+    if (!exists) {
+      activeTopicId = null;
+      studyState = {
+        ...studyState,
+        isOpen: false,
+        topicId: null,
+        cardIndex: 0,
+        isFlipped: false
+      };
+    }
+  };
+
+  const loadTopics = async () => {
+    updateTopicsStatus({ isLoading: true, error: null });
+    render();
+
+    try {
+      const response = await fetch('/api/groups');
+      if (!response.ok) {
+        throw new Error(`Статус ${response.status}`);
+      }
+      const payload = await response.json();
+      const mapped = Array.isArray(payload) ? payload.map(mapApiGroup) : [];
+      setTopics(mapped);
+      updateTopicsStatus({ isLoading: false, error: null });
+      ensureActiveTopicIsValid();
+      render();
+    } catch (error) {
+      console.error('Не удалось загрузить группы', error);
+      setTopics([]);
+      updateTopicsStatus({ isLoading: false, error: 'Попробуйте обновить страницу.' });
+      render();
+    }
+  };
+
+  const requestJson = async (input, { method = 'GET', body, headers = {} } = {}) => {
+    const response = await fetch(input, {
+      method,
+      body,
+      headers: {
+        'Content-Type': 'application/json',
+        ...headers
+      }
+    });
+
+    const contentType = response.headers.get('content-type') || '';
+    let payload = null;
+    if (contentType.includes('application/json')) {
+      payload = await response.json();
+    } else {
+      payload = await response.text();
+    }
+
+    if (!response.ok) {
+      const message = payload && typeof payload === 'object' && payload.error
+        ? payload.error
+        : typeof payload === 'string' && payload
+        ? payload
+        : `Статус ${response.status}`;
+      throw new Error(message);
+    }
+
+    return payload;
+  };
+
+  const submitGroupForm = async (form) => {
+    const formData = new FormData(form);
+    const name = (formData.get('name') || '').trim();
+    const subtitle = (formData.get('subtitle') || '').trim();
+    const description = (formData.get('description') || '').trim();
+    const coverImage = (formData.get('coverImage') || '').trim();
+
+    if (!name) {
+      setProfileFeedback('createGroup', 'Введите название группы.', 'error');
+      render();
+      return;
+    }
+
+    try {
+      await requestJson('/api/groups', {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          subtitle: subtitle || null,
+          description: description || null,
+          coverImage: coverImage || null
+        })
+      });
+      form.reset();
+      setProfileFeedback('createGroup', 'Группа успешно создана.', 'success');
+      await loadTopics();
+    } catch (error) {
+      setProfileFeedback('createGroup', error.message, 'error');
+      render();
+    }
+  };
+
+  const submitCardForm = async (form) => {
+    const formData = new FormData(form);
+    const groupId = Number(formData.get('groupId'));
+    const original = (formData.get('original') || '').trim();
+    const translation = (formData.get('translation') || '').trim();
+    const image = (formData.get('image') || '').trim();
+
+    if (!groupId || !Number.isInteger(groupId)) {
+      setProfileFeedback('createCard', 'Выберите группу.', 'error');
+      render();
+      return;
+    }
+
+    if (!translation) {
+      setProfileFeedback('createCard', 'Добавьте перевод для карточки.', 'error');
+      render();
+      return;
+    }
+
+    try {
+      await requestJson(`/api/groups/${groupId}/cards`, {
+        method: 'POST',
+        body: JSON.stringify({
+          original: original || null,
+          translation,
+          image: image || null
+        })
+      });
+      form.reset();
+      setProfileFeedback('createCard', 'Карточка добавлена.', 'success');
+      await loadTopics();
+    } catch (error) {
+      setProfileFeedback('createCard', error.message, 'error');
+      render();
+    }
+  };
+
   const renderHome = () => {
     if (!activeTopicId) {
       return renderTopicsHome();
@@ -426,7 +653,7 @@ export const createApp = (root) => {
     if (activeTab === 'home') {
       main.innerHTML = renderHome();
     } else if (activeTab === 'profile') {
-      main.innerHTML = renderProfile();
+      main.innerHTML = renderProfile(profileMessages);
     }
     updateNav();
   };
@@ -490,6 +717,18 @@ export const createApp = (root) => {
     }
   });
 
+  main.addEventListener('submit', (event) => {
+    const form = event.target.closest('[data-form]');
+    if (!form) return;
+    event.preventDefault();
+
+    if (form.dataset.form === 'create-group') {
+      submitGroupForm(form);
+    } else if (form.dataset.form === 'create-card') {
+      submitCardForm(form);
+    }
+  });
+
   render();
 
   studyOverlay.addEventListener('click', (event) => {
@@ -532,6 +771,8 @@ export const createApp = (root) => {
       toggleStudyCard();
     }
   });
+
+  loadTopics();
 
   return {
     navigate: (tab) => {

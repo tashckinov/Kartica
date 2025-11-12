@@ -490,6 +490,125 @@ body.study-open {
   box-shadow: 0 24px 40px -30px var(--shadow-color);
 }
 
+.info-state {
+  margin: 0;
+  padding: clamp(16px, 5vw, 24px);
+  border-radius: 16px;
+  background: rgba(148, 163, 219, 0.12);
+  border: 1px dashed rgba(148, 163, 219, 0.38);
+  color: var(--secondary-text-color);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.info-state[data-state='error'] {
+  background: rgba(248, 113, 113, 0.14);
+  border-color: rgba(248, 113, 113, 0.32);
+  color: #fecaca;
+}
+
+.info-state[data-state='loading'] {
+  position: relative;
+  padding-left: clamp(32px, 6vw, 40px);
+}
+
+.info-state[data-state='loading']::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: clamp(12px, 4vw, 16px);
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 999px;
+  border: 2px solid rgba(148, 163, 219, 0.42);
+  border-top-color: var(--accent-color);
+  animation: spin 1s linear infinite;
+}
+
+.manage-form {
+  display: grid;
+  gap: clamp(10px, 3vw, 16px);
+}
+
+.manage-field {
+  display: grid;
+  gap: 6px;
+}
+
+.manage-field span {
+  font-size: 13px;
+  color: var(--secondary-text-color);
+}
+
+.manage-field input,
+.manage-field textarea,
+.manage-field select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 18%, var(--border-color));
+  background: color-mix(in srgb, var(--surface-color) 94%, transparent);
+  color: var(--text-color);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.manage-field input:focus,
+.manage-field textarea:focus,
+.manage-field select:focus {
+  border-color: color-mix(in srgb, var(--accent-color) 70%, transparent);
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
+}
+
+.manage-field textarea {
+  resize: vertical;
+  min-height: 96px;
+}
+
+.manage-submit {
+  justify-self: start;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: none;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.92), rgba(14, 165, 233, 0.86));
+  color: #0f172a;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.manage-submit:hover,
+.manage-submit:focus {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 32px -18px rgba(56, 189, 248, 0.7);
+}
+
+.form-feedback {
+  margin: 0;
+  font-size: 13px;
+  color: var(--secondary-text-color);
+}
+
+.form-feedback[data-variant='error'] {
+  color: #fca5a5;
+}
+
+.form-feedback[data-variant='success'] {
+  color: #bbf7d0;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .profile-card h2,
 .profile-card h3 {
   margin: 0;

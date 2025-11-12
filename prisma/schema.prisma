@@ -1,0 +1,30 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Group {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  subtitle    String?
+  description String?
+  coverImage  String?
+  cards       Card[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Card {
+  id          Int      @id @default(autoincrement())
+  translation String
+  original    String?
+  image       String?
+  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  groupId     Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

@@ -1,0 +1,22 @@
+{
+  "name": "kartica",
+  "version": "1.0.0",
+  "description": "Приложение карточек с сервером на Node.js и SQLite.",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/index.js",
+    "seed": "node prisma/seed.js"
+  },
+  "keywords": [
+    "flashcards",
+    "sqlite",
+    "prisma"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {},
+  "engines": {
+    "node": ">=18"
+  }
+}

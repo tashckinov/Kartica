@@ -1,0 +1,189 @@
+openapi: 3.0.3
+info:
+  title: Kartica Flashcards API
+  version: 1.0.0
+  description: API для управления группами карточек и отдельными карточками.
+servers:
+  - url: http://localhost:3000
+paths:
+  /api/groups:
+    get:
+      summary: Список групп карточек
+      tags: [Groups]
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GroupWithCards'
+    post:
+      summary: Создать новую группу карточек
+      tags: [Groups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGroupInput'
+      responses:
+        '201':
+          description: Группа создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupWithCards'
+        '400':
+          description: Некорректные данные запроса
+        '409':
+          description: Группа с таким именем уже существует
+  /api/groups/{groupId}:
+    get:
+      summary: Получить группу по идентификатору
+      tags: [Groups]
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+      responses:
+        '200':
+          description: Найденная группа
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupWithCards'
+        '404':
+          description: Группа не найдена
+  /api/groups/{groupId}/cards:
+    get:
+      summary: Список карточек в группе
+      tags: [Cards]
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+      responses:
+        '200':
+          description: Список карточек
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Card'
+        '404':
+          description: Группа не найдена
+    post:
+      summary: Добавить новую карточку в группу
+      tags: [Cards]
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCardInput'
+      responses:
+        '201':
+          description: Карточка создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Card'
+        '400':
+          description: Некорректные данные запроса
+        '404':
+          description: Группа не найдена
+components:
+  parameters:
+    GroupId:
+      name: groupId
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+      description: Идентификатор группы карточек
+  schemas:
+    Group:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        subtitle:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        coverImage:
+          type: string
+          format: uri
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    Card:
+      type: object
+      properties:
+        id:
+          type: integer
+        translation:
+          type: string
+        original:
+          type: string
+          nullable: true
+        image:
+          type: string
+          format: uri
+          nullable: true
+        groupId:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    GroupWithCards:
+      allOf:
+        - $ref: '#/components/schemas/Group'
+        - type: object
+          properties:
+            cards:
+              type: array
+              items:
+                $ref: '#/components/schemas/Card'
+    CreateGroupInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        subtitle:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        coverImage:
+          type: string
+          format: uri
+          nullable: true
+    CreateCardInput:
+      type: object
+      required: [translation]
+      properties:
+        translation:
+          type: string
+        original:
+          type: string
+          nullable: true
+        image:
+          type: string
+          format: uri
+          nullable: true
