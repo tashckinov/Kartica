@@ -1,12 +1,37 @@
+const telegramInitData = window.Telegram?.WebApp?.initData || '';
+
 let topics = [];
+
+let profileState = {
+  isLoading: true,
+  error: null,
+  user: null,
+  history: [],
+  likes: []
+};
 
 const topicsStatus = {
   isLoading: true,
   error: null
 };
 
+const getProfileState = () => ({ ...profileState });
+
+const updateTopicLikes = () => {
+  const likedIds = new Set(profileState.likes.map((item) => item.groupId));
+  topics = topics.map((topic) => ({ ...topic, isLiked: likedIds.has(topic.groupId) }));
+};
+
 const setTopics = (nextTopics = []) => {
   topics = Array.isArray(nextTopics) ? nextTopics : [];
+  updateTopicLikes();
+};
+
+const setProfileState = (patch = {}, { reconcileTopics = false } = {}) => {
+  profileState = { ...profileState, ...patch };
+  if (reconcileTopics) {
+    updateTopicLikes();
+  }
 };
 
 const updateTopicsStatus = (patch) => {
@@ -46,15 +71,74 @@ const mapApiCard = (card) => ({
   image: card.image || null
 });
 
-const mapApiGroup = (group) => ({
-  id: `group-${group.id}`,
-  groupId: group.id,
-  title: group.name,
-  subtitle: group.subtitle || null,
-  description: group.description || null,
-  coverImage: group.coverImage || null,
-  cards: Array.isArray(group.cards) ? group.cards.map(mapApiCard) : []
-});
+const mapApiGroup = (group) => {
+  const cards = Array.isArray(group.cards) ? group.cards.map(mapApiCard) : [];
+  const cardsCount = Number.isInteger(group.cardsCount) ? group.cardsCount : cards.length;
+
+  return {
+    id: `group-${group.id}`,
+    groupId: group.id,
+    title: group.name,
+    subtitle: group.subtitle || null,
+    description: group.description || null,
+    coverImage: group.coverImage || null,
+    cards,
+    cardsCount,
+    isLiked: Boolean(group.isLiked)
+  };
+};
+
+const parseDate = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const mapProfileHistoryItem = (item) => {
+  if (!item || !item.group) {
+    return null;
+  }
+
+  const groupData = {
+    ...item.group,
+    cards: Array.isArray(item.group.cards) ? item.group.cards : [],
+    cardsCount: item.group.cardsCount
+  };
+
+  return {
+    id: `history-${item.groupId}`,
+    groupId: item.groupId,
+    lastOpenedAt: parseDate(item.lastOpenedAt),
+    group: mapApiGroup(groupData)
+  };
+};
+
+const mapProfileLikeItem = (item) => {
+  if (!item || !item.group) {
+    return null;
+  }
+
+  const groupData = {
+    ...item.group,
+    cards: Array.isArray(item.group.cards) ? item.group.cards : [],
+    cardsCount: item.group.cardsCount,
+    isLiked: true
+  };
+
+  return {
+    id: `like-${item.groupId}`,
+    groupId: item.groupId,
+    likedAt: parseDate(item.likedAt),
+    group: mapApiGroup(groupData)
+  };
+};
 
 const createFlashcard = (card, { topicTitle, showTopic = false } = {}) => {
   const hasImage = Boolean(card.image);
@@ -84,10 +168,17 @@ const createFlashcard = (card, { topicTitle, showTopic = false } = {}) => {
   `;
 };
 
+const getCardsCountInfo = (count) => {
+  const total = Number.isInteger(count) ? count : 0;
+  const word = total === 1 ? 'карточка' : total >= 2 && total <= 4 ? 'карточки' : 'карточек';
+  return { total, text: `${total} ${word}` };
+};
+
 const createTopicCard = (topic) => {
   const hasCover = Boolean(topic.coverImage);
-  const cardsCount = topic.cards.length;
-  const cardWord = cardsCount === 1 ? 'карточка' : cardsCount >= 2 && cardsCount <= 4 ? 'карточки' : 'карточек';
+  const { text: cardsText } = getCardsCountInfo(
+    Number.isInteger(topic.cardsCount) ? topic.cardsCount : topic.cards.length
+  );
 
   return `
     <article class="topic-card" data-topic-card="${topic.id}" role="button" tabindex="0">
@@ -97,7 +188,7 @@ const createTopicCard = (topic) => {
             ? `<img src="${topic.coverImage}" alt="${topic.title}" loading="lazy" />`
             : '<div class="topic-card-placeholder" aria-hidden="true"></div>'
         }
-        <span class="topic-card-badge">${cardsCount} ${cardWord}</span>
+        <span class="topic-card-badge">${cardsText}</span>
       </div>
       <div class="topic-card-body">
         <h2 class="topic-card-title">${topic.title}</h2>
@@ -131,6 +222,18 @@ const renderTopicDetail = (topic) => {
               : ''
           }
         </div>
+        <div class="topic-detail-actions">
+          <button
+            class="topic-like-button"
+            type="button"
+            data-action="toggle-like"
+            data-group="${topic.groupId}"
+            data-liked="${topic.isLiked ? 'true' : 'false'}"
+            aria-pressed="${topic.isLiked ? 'true' : 'false'}"
+          >
+            ${topic.isLiked ? '★ В избранном' : '☆ В избранное'}
+          </button>
+        </div>
       </header>
       <section class="topic-hero">
         ${
@@ -156,7 +259,7 @@ const renderTopicDetail = (topic) => {
       <section class="topic-cards">
         <div class="topic-cards-header">
           <h2>Карточки</h2>
-          <span class="topic-cards-count">${topic.cards.length}</span>
+          <span class="topic-cards-count">${Number.isInteger(topic.cardsCount) ? topic.cardsCount : topic.cards.length}</span>
         </div>
         <div class="card-list">
           ${topic.cards
@@ -194,83 +297,109 @@ const renderTopicsHome = () => {
   `;
 };
 
-const renderProfile = (messages = {}) => {
-  const hasTopics = topics.length > 0;
-  const options = topics
-    .map((topic) => `<option value="${topic.groupId}">${topic.title}</option>`)
-    .join('');
-  const groupMessage = messages.createGroup || null;
-  const cardMessage = messages.createCard || null;
+const formatDateTime = (value) => {
+  const date = parseDate(value);
+  if (!date) {
+    return '';
+  }
 
-  const renderFormFeedback = (message) => {
-    if (!message) {
-      return '<p class="form-feedback" data-feedback hidden></p>';
-    }
-    return `<p class="form-feedback" data-feedback data-variant="${message.variant}">${message.text}</p>`;
-  };
+  return new Intl.DateTimeFormat('ru-RU', {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  }).format(date);
+};
+
+const renderProfileGroupList = (items, { emptyText, metaFormatter } = {}) => {
+  if (!items.length) {
+    return `<p class="info-state">${emptyText}</p>`;
+  }
 
   return `
-    <div class="profile-screen">
-      <div class="profile-card">
-        <h2>Управление карточками</h2>
-        <p>Создавайте группы карточек и пополняйте их новыми фразами.</p>
-      </div>
-      <div class="profile-card">
-        <h3>Новая группа</h3>
-        <form class="manage-form" data-form="create-group">
-          <label class="manage-field">
-            <span>Название *</span>
-            <input type="text" name="name" required placeholder="Например, English B1" />
-          </label>
-          <label class="manage-field">
-            <span>Подзаголовок</span>
-            <input type="text" name="subtitle" placeholder="Краткое описание" />
-          </label>
-          <label class="manage-field">
-            <span>Описание</span>
-            <textarea name="description" rows="3" placeholder="Расскажите, что внутри группы"></textarea>
-          </label>
-          <label class="manage-field">
-            <span>Ссылка на обложку</span>
-            <input type="url" name="coverImage" placeholder="https://..." />
-          </label>
-          <button type="submit" class="manage-submit">Создать группу</button>
-          ${renderFormFeedback(groupMessage)}
-        </form>
-      </div>
-      <div class="profile-card">
-        <h3>Новая карточка</h3>
-        ${
-          hasTopics
-            ? `
-                <form class="manage-form" data-form="create-card">
-                  <label class="manage-field">
-                    <span>Группа *</span>
-                    <select name="groupId" required>
-                      <option value="" disabled selected>Выберите группу</option>
-                      ${options}
-                    </select>
-                  </label>
-                  <label class="manage-field">
-                    <span>Оригинал</span>
-                    <input type="text" name="original" placeholder="Например, break down" />
-                  </label>
-                  <label class="manage-field">
-                    <span>Перевод *</span>
-                    <input type="text" name="translation" required placeholder="Например, сломаться" />
-                  </label>
-                  <label class="manage-field">
-                    <span>Ссылка на изображение</span>
-                    <input type="url" name="image" placeholder="https://..." />
-                  </label>
-                  <button type="submit" class="manage-submit">Добавить карточку</button>
-                  ${renderFormFeedback(cardMessage)}
-                </form>
-              `
-            : '<p class="info-state">Создайте хотя бы одну группу, чтобы добавлять карточки.</p>'
-        }
-      </div>
-    </div>
+    <ul class="profile-group-list">
+      ${items
+        .map((item) => {
+          const topic = item.group;
+          const hasCover = Boolean(topic.coverImage);
+          const { text: cardsText } = getCardsCountInfo(topic.cardsCount);
+          const meta = typeof metaFormatter === 'function' ? metaFormatter(item) : '';
+          const hasMeta = Boolean(meta);
+
+          return `
+            <li>
+              <button class="profile-group-button" type="button" data-topic-card="${topic.id}" data-group-id="${item.groupId}">
+                <span class="profile-group-cover">
+                  ${
+                    hasCover
+                      ? `<img src="${topic.coverImage}" alt="${topic.title}" loading="lazy" />`
+                      : '<span class="profile-group-placeholder" aria-hidden="true"></span>'
+                  }
+                </span>
+                <span class="profile-group-content">
+                  <span class="profile-group-title">${topic.title}</span>
+                  ${
+                    topic.subtitle
+                      ? `<span class="profile-group-subtitle">${topic.subtitle}</span>`
+                      : ''
+                  }
+                  <span class="profile-group-meta-row">
+                    <span class="profile-group-count">${cardsText}</span>
+                    ${hasMeta ? `<span class="profile-group-meta">${meta}</span>` : ''}
+                  </span>
+                </span>
+              </button>
+            </li>
+          `;
+        })
+        .join('')}
+    </ul>
+  `;
+};
+
+const renderProfile = () => {
+  const { isLoading, error, history, likes, user } = getProfileState();
+
+  if (isLoading) {
+    return `<div class="info-state" data-state="loading">Загружаем профиль...</div>`;
+  }
+
+  if (error) {
+    return `<div class="info-state" data-state="error">Не удалось загрузить профиль. ${error}</div>`;
+  }
+
+  const displayName = user?.firstName || user?.username || null;
+  const profileTitle = displayName ? `Привет, ${displayName}!` : 'Профиль';
+
+  const historySection = renderProfileGroupList(history, {
+    emptyText: 'История появится здесь, как только вы начнёте изучать группы.',
+    metaFormatter: (item) =>
+      item.lastOpenedAt ? `Открыто: ${formatDateTime(item.lastOpenedAt)}` : ''
+  });
+
+  const likesSection = renderProfileGroupList(likes, {
+    emptyText: 'Отметьте понравившиеся группы, чтобы быстро находить их.',
+    metaFormatter: (item) =>
+      item.likedAt ? `Добавлено: ${formatDateTime(item.likedAt)}` : ''
+  });
+
+  return `
+    <section class="profile-layout">
+      <header class="profile-header">
+        <h1 class="profile-title">${profileTitle}</h1>
+        <p class="profile-description">Отслеживайте, что вы изучали, и возвращайтесь к любимым группам.</p>
+      </header>
+      <section class="profile-section">
+        <div class="profile-section-header">
+          <h2>Недавнее изучение</h2>
+        </div>
+        ${historySection}
+      </section>
+      <section class="profile-section">
+        <div class="profile-section-header">
+          <h2>Понравившиеся группы</h2>
+        </div>
+        ${likesSection}
+      </section>
+    </section>
   `;
 };
 
@@ -302,10 +431,6 @@ export const createApp = (root) => {
   const studyOverlay = root.querySelector('.study-overlay');
   let activeTab = 'home';
   let activeTopicId = null;
-  let profileMessages = {
-    createGroup: null,
-    createCard: null
-  };
   let studyState = {
     isOpen: false,
     topicId: null,
@@ -478,18 +603,6 @@ export const createApp = (root) => {
     applyStudyFlipState();
   };
 
-  const setProfileFeedback = (type, text, variant = 'info') => {
-    profileMessages = {
-      ...profileMessages,
-      [type]: text
-        ? {
-            text,
-            variant
-          }
-        : null
-    };
-  };
-
   const ensureActiveTopicIsValid = () => {
     if (!activeTopicId) return;
     const exists = topics.some((topic) => topic.id === activeTopicId);
@@ -505,16 +618,108 @@ export const createApp = (root) => {
     }
   };
 
+  const applyTopicLike = (groupId, isLiked) => {
+    topics = topics.map((topic) =>
+      topic.groupId === groupId ? { ...topic, isLiked: Boolean(isLiked) } : topic
+    );
+  };
+
+  const loadProfile = async ({ silent = false } = {}) => {
+    if (!silent) {
+      setProfileState({ isLoading: true, error: null });
+      if (activeTab === 'profile') {
+        render();
+      }
+    }
+
+    try {
+      const payload = await requestJson('/api/me');
+      const historyRaw = Array.isArray(payload.history) ? payload.history : [];
+      const likesRaw = Array.isArray(payload.likes) ? payload.likes : [];
+
+      const likes = likesRaw.map(mapProfileLikeItem).filter(Boolean);
+      const likedIds = new Set(likes.map((item) => item.groupId));
+      const history = historyRaw
+        .map(mapProfileHistoryItem)
+        .filter(Boolean)
+        .map((entry) => ({
+          ...entry,
+          group: { ...entry.group, isLiked: likedIds.has(entry.groupId) }
+        }));
+
+      const userSummary = payload && typeof payload === 'object' ? payload.user ?? null : null;
+
+      setProfileState(
+        {
+          isLoading: false,
+          error: null,
+          user: userSummary,
+          history,
+          likes
+        },
+        { reconcileTopics: true }
+      );
+
+      render();
+    } catch (error) {
+      console.error('Не удалось загрузить профиль', error);
+      if (!silent) {
+        setProfileState(
+          {
+            isLoading: false,
+            error: 'Попробуйте обновить страницу.',
+            history: [],
+            likes: []
+          },
+          { reconcileTopics: true }
+        );
+        render();
+      }
+    }
+  };
+
+  const markGroupVisited = async (groupId) => {
+    if (!Number.isInteger(groupId)) {
+      return;
+    }
+
+    try {
+      await requestJson(`/api/groups/${groupId}/history`, { method: 'POST' });
+      await loadProfile({ silent: true });
+    } catch (error) {
+      console.error('Не удалось обновить историю пользователя', error);
+    }
+  };
+
+  const toggleGroupLike = async (groupId) => {
+    if (!Number.isInteger(groupId)) {
+      return;
+    }
+
+    const topic = topics.find((item) => item.groupId === groupId) || null;
+    const shouldLike = topic ? !topic.isLiked : true;
+
+    try {
+      if (shouldLike) {
+        await requestJson(`/api/groups/${groupId}/like`, { method: 'POST' });
+      } else {
+        await requestJson(`/api/groups/${groupId}/like`, { method: 'DELETE' });
+      }
+
+      applyTopicLike(groupId, shouldLike);
+      render();
+      await loadProfile({ silent: true });
+    } catch (error) {
+      console.error('Не удалось обновить список избранного', error);
+    }
+  };
+
   const loadTopics = async () => {
     updateTopicsStatus({ isLoading: true, error: null });
     render();
 
     try {
-      const response = await fetch('/api/groups');
-      if (!response.ok) {
-        throw new Error(`Статус ${response.status}`);
-      }
-      const payload = await response.json();
+      const payload = await requestJson('/api/groups');
       const mapped = Array.isArray(payload) ? payload.map(mapApiGroup) : [];
       setTopics(mapped);
       updateTopicsStatus({ isLoading: false, error: null });
@@ -528,15 +733,22 @@ export const createApp = (root) => {
     }
   };
 
-  const requestJson = async (input, { method = 'GET', body, headers = {} } = {}) => {
-    const response = await fetch(input, {
-      method,
-      body,
-      headers: {
-        'Content-Type': 'application/json',
-        ...headers
+  const requestJson = async (input, { method = 'GET', body, headers = {}, signal } = {}) => {
+    const nextHeaders = { ...headers };
+    const init = { method, headers: nextHeaders, signal };
+
+    if (typeof body !== 'undefined') {
+      init.body = body;
+      if (!('Content-Type' in nextHeaders)) {
+        nextHeaders['Content-Type'] = 'application/json';
       }
-    });
+    }
+
+    if (telegramInitData) {
+      nextHeaders['X-Telegram-Data'] = telegramInitData;
+    }
+
+    const response = await fetch(input, init);
 
     const contentType = response.headers.get('content-type') || '';
     let payload = null;
@@ -556,75 +768,6 @@ export const createApp = (root) => {
     }
 
     return payload;
-  };
-
-  const submitGroupForm = async (form) => {
-    const formData = new FormData(form);
-    const name = (formData.get('name') || '').trim();
-    const subtitle = (formData.get('subtitle') || '').trim();
-    const description = (formData.get('description') || '').trim();
-    const coverImage = (formData.get('coverImage') || '').trim();
-
-    if (!name) {
-      setProfileFeedback('createGroup', 'Введите название группы.', 'error');
-      render();
-      return;
-    }
-
-    try {
-      await requestJson('/api/groups', {
-        method: 'POST',
-        body: JSON.stringify({
-          name,
-          subtitle: subtitle || null,
-          description: description || null,
-          coverImage: coverImage || null
-        })
-      });
-      form.reset();
-      setProfileFeedback('createGroup', 'Группа успешно создана.', 'success');
-      await loadTopics();
-    } catch (error) {
-      setProfileFeedback('createGroup', error.message, 'error');
-      render();
-    }
-  };
-
-  const submitCardForm = async (form) => {
-    const formData = new FormData(form);
-    const groupId = Number(formData.get('groupId'));
-    const original = (formData.get('original') || '').trim();
-    const translation = (formData.get('translation') || '').trim();
-    const image = (formData.get('image') || '').trim();
-
-    if (!groupId || !Number.isInteger(groupId)) {
-      setProfileFeedback('createCard', 'Выберите группу.', 'error');
-      render();
-      return;
-    }
-
-    if (!translation) {
-      setProfileFeedback('createCard', 'Добавьте перевод для карточки.', 'error');
-      render();
-      return;
-    }
-
-    try {
-      await requestJson(`/api/groups/${groupId}/cards`, {
-        method: 'POST',
-        body: JSON.stringify({
-          original: original || null,
-          translation,
-          image: image || null
-        })
-      });
-      form.reset();
-      setProfileFeedback('createCard', 'Карточка добавлена.', 'success');
-      await loadTopics();
-    } catch (error) {
-      setProfileFeedback('createCard', error.message, 'error');
-      render();
-    }
   };
 
   const renderHome = () => {
@@ -653,7 +796,7 @@ export const createApp = (root) => {
     if (activeTab === 'home') {
       main.innerHTML = renderHome();
     } else if (activeTab === 'profile') {
-      main.innerHTML = renderProfile(profileMessages);
+      main.innerHTML = renderProfile();
     }
     updateNav();
   };
@@ -669,10 +812,16 @@ export const createApp = (root) => {
   });
 
   const showTopic = (topicId) => {
-    activeTopicId = topicId;
+    const topic = topics.find((item) => item.id === topicId);
+    if (!topic) {
+      return;
+    }
+
+    activeTopicId = topic.id;
     if (activeTab !== 'home') {
       activeTab = 'home';
     }
+    markGroupVisited(topic.groupId);
     render();
   };
 
@@ -684,48 +833,68 @@ export const createApp = (root) => {
   };
 
   main.addEventListener('click', (event) => {
-    if (activeTab !== 'home') return;
-
-    const topicCard = event.target.closest('[data-topic-card]');
-    if (topicCard) {
-      showTopic(topicCard.dataset.topicCard);
+    const likeButton = event.target.closest('[data-action="toggle-like"]');
+    if (likeButton) {
+      event.preventDefault();
+      const groupId = Number(likeButton.dataset.group);
+      if (Number.isInteger(groupId)) {
+        toggleGroupLike(groupId);
+      }
       return;
     }
 
-    const backButton = event.target.closest('[data-action="back-to-topics"]');
-    if (backButton) {
-      showTopicsList();
-      return;
-    }
+    if (activeTab === 'home') {
+      const topicCard = event.target.closest('[data-topic-card]');
+      if (topicCard) {
+        showTopic(topicCard.dataset.topicCard);
+        return;
+      }
 
-    const modeButton = event.target.closest('[data-mode="study"]');
-    if (modeButton) {
-      if (activeTopicId) {
+      const backButton = event.target.closest('[data-action="back-to-topics"]');
+      if (backButton) {
+        showTopicsList();
+        return;
+      }
+
+      const modeButton = event.target.closest('[data-mode="study"]');
+      if (modeButton && activeTopicId) {
         openStudyMode(activeTopicId, 0);
+      }
+      return;
+    }
+
+    if (activeTab === 'profile') {
+      const profileButton = event.target.closest('.profile-group-button');
+      if (profileButton) {
+        const topicId = profileButton.dataset.topicCard;
+        if (topicId) {
+          showTopic(topicId);
+        }
       }
     }
   });
 
   main.addEventListener('keydown', (event) => {
-    if (activeTab !== 'home') return;
     if (event.key !== 'Enter' && event.key !== ' ') return;
 
-    const topicCard = event.target.closest('[data-topic-card]');
-    if (topicCard) {
-      event.preventDefault();
-      showTopic(topicCard.dataset.topicCard);
+    if (activeTab === 'home') {
+      const topicCard = event.target.closest('[data-topic-card]');
+      if (topicCard) {
+        event.preventDefault();
+        showTopic(topicCard.dataset.topicCard);
+      }
+      return;
     }
-  });
 
-  main.addEventListener('submit', (event) => {
-    const form = event.target.closest('[data-form]');
-    if (!form) return;
-    event.preventDefault();
-
-    if (form.dataset.form === 'create-group') {
-      submitGroupForm(form);
-    } else if (form.dataset.form === 'create-card') {
-      submitCardForm(form);
+    if (activeTab === 'profile') {
+      const profileButton = event.target.closest('.profile-group-button');
+      if (profileButton) {
+        event.preventDefault();
+        const topicId = profileButton.dataset.topicCard;
+        if (topicId) {
+          showTopic(topicId);
+        }
+      }
     }
   });
 
@@ -773,6 +942,7 @@ export const createApp = (root) => {
   });
 
   loadTopics();
+  loadProfile();
 
   return {
     navigate: (tab) => {

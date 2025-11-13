@@ -14,6 +14,8 @@ model Group {
   description String?
   coverImage  String?  @map("cover_image")
   cards       Card[]
+  histories   GroupHistory[]
+  likes       GroupLike[]
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -31,4 +33,47 @@ model Card {
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@map("cards")
+}
+
+model User {
+  id           Int            @id @default(autoincrement())
+  telegramId   String         @unique @map("telegram_id")
+  firstName    String?        @map("first_name")
+  lastName     String?        @map("last_name")
+  username     String?
+  languageCode String?        @map("language_code")
+  photoUrl     String?        @map("photo_url")
+  histories    GroupHistory[]
+  likes        GroupLike[]
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model GroupHistory {
+  id           Int      @id @default(autoincrement())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       Int      @map("user_id")
+  group        Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  groupId      Int      @map("group_id")
+  lastOpenedAt DateTime @default(now()) @map("last_opened_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, groupId])
+  @@map("group_histories")
+}
+
+model GroupLike {
+  id        Int      @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int      @map("user_id")
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  groupId   Int      @map("group_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, groupId])
+  @@map("group_likes")
 }

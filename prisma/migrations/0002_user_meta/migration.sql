@@ -1,0 +1,52 @@
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  telegram_id TEXT NOT NULL UNIQUE,
+  first_name TEXT,
+  last_name TEXT,
+  username TEXT,
+  language_code TEXT,
+  photo_url TEXT,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS group_histories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  group_id INTEGER NOT NULL,
+  last_opened_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, group_id),
+  CONSTRAINT fk_group_histories_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_group_histories_group FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS group_likes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  group_id INTEGER NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, group_id),
+  CONSTRAINT fk_group_likes_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_group_likes_group FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
+);
+
+CREATE TRIGGER IF NOT EXISTS update_users_updated_at
+AFTER UPDATE ON users
+BEGIN
+  UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS update_group_histories_updated_at
+AFTER UPDATE ON group_histories
+BEGIN
+  UPDATE group_histories SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS update_group_likes_updated_at
+AFTER UPDATE ON group_likes
+BEGIN
+  UPDATE group_likes SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;

@@ -62,6 +62,9 @@ const cards = [
 (async () => {
   await prisma.$connect();
 
+  await prisma.groupHistory.deleteMany();
+  await prisma.groupLike.deleteMany();
+  await prisma.user.deleteMany();
   await prisma.card.deleteMany();
   await prisma.group.deleteMany();
 

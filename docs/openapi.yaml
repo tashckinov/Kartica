@@ -10,6 +10,8 @@ paths:
     get:
       summary: Список групп карточек
       tags: [Groups]
+      security:
+        - TelegramInitData: []
       responses:
         '200':
           description: Успешный ответ
@@ -22,6 +24,8 @@ paths:
     post:
       summary: Создать новую группу карточек
       tags: [Groups]
+      security:
+        - TelegramInitData: []
       requestBody:
         required: true
         content:
@@ -45,6 +49,8 @@ paths:
       tags: [Groups]
       parameters:
         - $ref: '#/components/parameters/GroupId'
+      security:
+        - TelegramInitData: []
       responses:
         '200':
           description: Найденная группа
@@ -60,6 +66,8 @@ paths:
       tags: [Cards]
       parameters:
         - $ref: '#/components/parameters/GroupId'
+      security:
+        - TelegramInitData: []
       responses:
         '200':
           description: Список карточек
@@ -76,6 +84,8 @@ paths:
       tags: [Cards]
       parameters:
         - $ref: '#/components/parameters/GroupId'
+      security:
+        - TelegramInitData: []
       requestBody:
         required: true
         content:
@@ -93,7 +103,76 @@ paths:
           description: Некорректные данные запроса
         '404':
           description: Группа не найдена
+  /api/groups/{groupId}/history:
+    post:
+      summary: Сохранить историю изучения группы
+      tags: [Profile]
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+      security:
+        - TelegramInitData: []
+      responses:
+        '200':
+          description: История обновлена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryUpdateResponse'
+        '404':
+          description: Группа не найдена
+  /api/groups/{groupId}/like:
+    post:
+      summary: Добавить группу в избранное
+      tags: [Profile]
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+      security:
+        - TelegramInitData: []
+      responses:
+        '200':
+          description: Группа добавлена в избранное
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LikeToggleResponse'
+        '404':
+          description: Группа не найдена
+    delete:
+      summary: Удалить группу из избранного
+      tags: [Profile]
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+      security:
+        - TelegramInitData: []
+      responses:
+        '200':
+          description: Группа удалена из избранного
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LikeToggleResponse'
+        '404':
+          description: Группа не найдена
+  /api/me:
+    get:
+      summary: Данные профиля пользователя
+      tags: [Profile]
+      security:
+        - TelegramInitData: []
+      responses:
+        '200':
+          description: Информация о пользователе и связанных группах
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileSummary'
 components:
+  securitySchemes:
+    TelegramInitData:
+      type: apiKey
+      in: header
+      name: X-Telegram-Data
+      description: Подписанные данные инициализации Telegram Web App
   parameters:
     GroupId:
       name: groupId
@@ -121,6 +200,13 @@ components:
           type: string
           format: uri
           nullable: true
+        cardsCount:
+          type: integer
+          minimum: 0
+          description: Количество карточек, связанных с группой
+        isLiked:
+          type: boolean
+          description: Признак того, что текущий пользователь добавил группу в избранное
         createdAt:
           type: string
           format: date-time
@@ -187,3 +273,87 @@ components:
           type: string
           format: uri
           nullable: true
+    HistoryUpdateResponse:
+      type: object
+      properties:
+        groupId:
+          type: integer
+        lastOpenedAt:
+          type: string
+          format: date-time
+          nullable: true
+    LikeToggleResponse:
+      type: object
+      properties:
+        groupId:
+          type: integer
+        isLiked:
+          type: boolean
+        likedAt:
+          type: string
+          format: date-time
+          nullable: true
+    UserSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+        telegramId:
+          type: string
+        firstName:
+          type: string
+          nullable: true
+        lastName:
+          type: string
+          nullable: true
+        username:
+          type: string
+          nullable: true
+        languageCode:
+          type: string
+          nullable: true
+        photoUrl:
+          type: string
+          format: uri
+          nullable: true
+    ProfileHistoryItem:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: ['history']
+        groupId:
+          type: integer
+        lastOpenedAt:
+          type: string
+          format: date-time
+          nullable: true
+        group:
+          $ref: '#/components/schemas/Group'
+    ProfileLikeItem:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: ['like']
+        groupId:
+          type: integer
+        likedAt:
+          type: string
+          format: date-time
+          nullable: true
+        group:
+          $ref: '#/components/schemas/Group'
+    ProfileSummary:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/UserSummary'
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProfileHistoryItem'
+        likes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProfileLikeItem'
