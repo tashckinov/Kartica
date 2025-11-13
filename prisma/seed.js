@@ -1,22 +1,56 @@
+const fs = require('fs');
+const path = require('path');
 const { execSync } = require('child_process');
 
 const DATABASE_URL = process.env.DATABASE_URL || 'file:./prisma/dev.db';
+const prismaDir = __dirname;
+const migrationsDir = path.join(prismaDir, 'migrations');
 
-const runPrismaCommand = (command, label) => {
+const runPrismaCommand = (command, label, { allowFailure = false } = {}) => {
   try {
     execSync(command, {
       stdio: 'inherit',
       env: { ...process.env, DATABASE_URL },
       shell: true
     });
+    return true;
   } catch (error) {
+    if (allowFailure) {
+      console.warn(`Failed to run ${label}.`, error.message || error);
+      return false;
+    }
     console.error(`Failed to run ${label} before seeding`, error);
     process.exit(1);
   }
 };
 
-runPrismaCommand('npx prisma migrate deploy', 'prisma migrate deploy');
+const hasMigrations = () => {
+  try {
+    const entries = fs.readdirSync(migrationsDir, { withFileTypes: true });
+    return entries.some((entry) => entry.isDirectory());
+  } catch (error) {
+    return false;
+  }
+};
+
 runPrismaCommand('npx prisma generate', 'prisma generate');
+
+const ensureDatabaseSchema = () => {
+  const migrationsPresent = hasMigrations();
+  const migrated = migrationsPresent
+    ? runPrismaCommand('npx prisma migrate deploy', 'prisma migrate deploy', { allowFailure: true })
+    : false;
+
+  if (!migrationsPresent) {
+    console.warn('No Prisma migrations were found. Falling back to `prisma db push` to sync the schema.');
+  }
+
+  if (!migrated) {
+    runPrismaCommand('npx prisma db push --skip-generate', 'prisma db push');
+  }
+};
+
+ensureDatabaseSchema();
 
 const { PrismaClient } = require('@prisma/client');
 

@@ -8,21 +8,53 @@ const { isValid } = require('@telegram-apps/init-data-node');
 const PORT = process.env.PORT || 3000;
 const DATABASE_URL = process.env.DATABASE_URL || 'file:./prisma/dev.db';
 const TELEGRAM_BOT_SECRET = process.env.TELEGRAM_BOT_SECRET || '';
-const runPrismaCommand = (command, label) => {
+const prismaDir = path.join(__dirname, '..', 'prisma');
+const migrationsDir = path.join(prismaDir, 'migrations');
+
+const runPrismaCommand = (command, label, { allowFailure = false } = {}) => {
   try {
     execSync(command, {
       stdio: 'inherit',
       env: { ...process.env, DATABASE_URL },
       shell: true
     });
+    return true;
   } catch (error) {
+    if (allowFailure) {
+      console.warn(`Failed to run ${label}.`, error.message || error);
+      return false;
+    }
     console.error(`Failed to run ${label}`, error);
     process.exit(1);
   }
 };
 
+const hasMigrations = () => {
+  try {
+    const entries = fs.readdirSync(migrationsDir, { withFileTypes: true });
+    return entries.some((entry) => entry.isDirectory());
+  } catch (error) {
+    return false;
+  }
+};
+
+const ensureDatabaseSchema = () => {
+  const migrationsPresent = hasMigrations();
+  const migrated = migrationsPresent
+    ? runPrismaCommand('npx prisma migrate deploy', 'prisma migrate deploy', { allowFailure: true })
+    : false;
+
+  if (!migrationsPresent) {
+    console.warn('No Prisma migrations were found. Falling back to `prisma db push` to sync the schema.');
+  }
+
+  if (!migrated) {
+    runPrismaCommand('npx prisma db push --skip-generate', 'prisma db push');
+  }
+};
+
 runPrismaCommand('npx prisma generate', 'prisma generate');
-runPrismaCommand('npx prisma migrate deploy', 'prisma migrate deploy');
+ensureDatabaseSchema();
 
 const { PrismaClient } = require('@prisma/client');
 
