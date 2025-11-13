@@ -1,5 +1,5 @@
-const telegramInitData = window.Telegram?.WebApp?.initData || '';
-const hasTelegramInitData = Boolean(telegramInitData);
+const getTelegramInitData = () => window.Telegram?.WebApp?.initData || '';
+const hasTelegramAuth = () => Boolean(getTelegramInitData());
 
 let topics = [];
 
@@ -9,7 +9,7 @@ let profileState = {
   user: null,
   history: [],
   likes: [],
-  isAuthorized: hasTelegramInitData
+  isAuthorized: hasTelegramAuth()
 };
 
 const topicsStatus = {
@@ -652,7 +652,7 @@ export const createApp = (root) => {
   };
 
   const loadProfile = async ({ silent = false } = {}) => {
-    if (!hasTelegramInitData) {
+    if (!hasTelegramAuth()) {
       setProfileState(
         {
           isLoading: false,
@@ -750,7 +750,7 @@ export const createApp = (root) => {
     }
 
     const { isAuthorized } = getProfileState();
-    if (!hasTelegramInitData || !isAuthorized) {
+    if (!hasTelegramAuth() || !isAuthorized) {
       return;
     }
 
@@ -768,7 +768,7 @@ export const createApp = (root) => {
     }
 
     const { isAuthorized } = getProfileState();
-    if (!hasTelegramInitData || !isAuthorized) {
+    if (!hasTelegramAuth() || !isAuthorized) {
       showAuthRequiredMessage();
       return;
     }
@@ -789,6 +789,24 @@ export const createApp = (root) => {
     } catch (error) {
       console.error('Не удалось обновить список избранного', error);
     }
+  };
+
+  const refreshTelegramAuth = async ({ silent = false } = {}) => {
+    const authorized = hasTelegramAuth();
+    const wasAuthorized = profileState.isAuthorized;
+
+    if (wasAuthorized !== authorized) {
+      setProfileState({ isAuthorized: authorized });
+      if (activeTab === 'profile') {
+        render();
+      }
+    }
+
+    if (!authorized) {
+      return;
+    }
+
+    await loadProfile({ silent });
   };
 
   const loadTopics = async () => {
@@ -821,6 +839,7 @@ export const createApp = (root) => {
       }
     }
 
+    const telegramInitData = getTelegramInitData();
     if (telegramInitData) {
       nextHeaders['X-Telegram-Data'] = telegramInitData;
     }
@@ -1030,6 +1049,7 @@ export const createApp = (root) => {
       activeTab = tab;
       closeStudyMode();
       render();
-    }
+    },
+    refreshTelegramAuth
   };
 };

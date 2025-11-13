@@ -1,7 +1,7 @@
 import { createApp } from './app.js';
 
 const root = document.getElementById('app');
-createApp(root);
+const app = createApp(root);
 
 const setCSSVariable = (name, value) => {
   if (!value) return;
@@ -89,6 +89,9 @@ if (window.Telegram && window.Telegram.WebApp) {
   webApp.ready();
   webApp.expand();
   applyTelegramTheme(webApp.themeParams || {});
+  if (typeof app?.refreshTelegramAuth === 'function') {
+    void app.refreshTelegramAuth();
+  }
   webApp.onEvent('themeChanged', () => {
     applyTelegramTheme(webApp.themeParams || {});
   });
