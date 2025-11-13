@@ -12,10 +12,12 @@ model Group {
   name        String   @unique
   subtitle    String?
   description String?
-  coverImage  String?
+  coverImage  String?  @map("cover_image")
   cards       Card[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("groups")
 }
 
 model Card {
@@ -23,8 +25,10 @@ model Card {
   translation String
   original    String?
   image       String?
-  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  groupId     Int
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade, map: "fk_group")
+  groupId     Int      @map("group_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("cards")
 }

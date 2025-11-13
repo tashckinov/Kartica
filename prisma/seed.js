@@ -50,7 +50,8 @@ const cards = [
 (async () => {
   await prisma.$connect();
 
-  prisma.client.run('DELETE FROM cards; DELETE FROM groups;');
+  await prisma.card.deleteMany();
+  await prisma.group.deleteMany();
 
   const group = await prisma.group.create({
     data: {
