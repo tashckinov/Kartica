@@ -126,17 +126,29 @@ const authenticateInitData = async (req, { required = true } = {}) => {
     }
 
     if (!isValid(initData, TELEGRAM_BOT_SECRET)) {
-      throw createHttpError(403, 'Access denied');
+      if (required) {
+        throw createHttpError(403, 'Access denied');
+      }
+      console.warn('Received invalid Telegram init data; continuing as guest.');
+      return null;
     }
 
     const telegramUser = parseTelegramUser(initData);
     if (!telegramUser) {
-      throw createHttpError(401, 'Invalid token. Refresh page please');
+      if (required) {
+        throw createHttpError(401, 'Invalid token. Refresh page please');
+      }
+      console.warn('Failed to parse Telegram init data; continuing as guest.');
+      return null;
     }
 
     const user = await upsertUserFromTelegram(telegramUser);
     if (!user) {
-      throw createHttpError(401, 'Invalid token. Refresh page please');
+      if (required) {
+        throw createHttpError(401, 'Invalid token. Refresh page please');
+      }
+      console.warn('Unable to persist Telegram user; continuing as guest.');
+      return null;
     }
 
     req.user = user;
@@ -146,6 +158,12 @@ const authenticateInitData = async (req, { required = true } = {}) => {
     if (error.status) {
       throw error;
     }
+
+    if (!required) {
+      console.warn('Failed to authenticate optional request; continuing as guest.', error);
+      return null;
+    }
+
     console.error('Failed to authenticate request', error);
     throw createHttpError(401, 'Invalid token. Refresh page please');
   }
