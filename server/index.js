@@ -7,18 +7,17 @@ const { PrismaClient } = require('@prisma/client');
 
 const PORT = process.env.PORT || 3000;
 const DATABASE_URL = process.env.DATABASE_URL || 'file:./prisma/dev.db';
+const prismaCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 
-const resolveDbPath = (connection) => {
-  if (connection.startsWith('file:')) {
-    return path.resolve(process.cwd(), connection.replace('file:', ''));
-  }
-  return path.resolve(process.cwd(), connection);
-};
-
-const dbPath = resolveDbPath(DATABASE_URL);
-const migrationSql = fs.readFileSync(path.join(__dirname, '../prisma/migrations/0001_init/migration.sql'), 'utf8');
-fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-execFileSync('sqlite3', [dbPath], { input: migrationSql, encoding: 'utf8' });
+try {
+  execFileSync(prismaCommand, ['prisma', 'migrate', 'deploy'], {
+    stdio: 'inherit',
+    env: { ...process.env, DATABASE_URL }
+  });
+} catch (error) {
+  console.error('Failed to run prisma migrate deploy', error);
+  process.exit(1);
+}
 
 const prisma = new PrismaClient({ datasourceUrl: DATABASE_URL });
 
