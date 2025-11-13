@@ -1,34 +1,22 @@
-const path = require('path');
-const fs = require('fs');
-const { execFileSync, execSync } = require('child_process');
+const { execSync } = require('child_process');
 
 const DATABASE_URL = process.env.DATABASE_URL || 'file:./prisma/dev.db';
 
-const resolveDbPath = (url) => {
-  if (url.startsWith('file:')) {
-    const relative = url.replace('file:', '');
-    return path.resolve(process.cwd(), relative);
+const runPrismaCommand = (command, label) => {
+  try {
+    execSync(command, {
+      stdio: 'inherit',
+      env: { ...process.env, DATABASE_URL },
+      shell: true
+    });
+  } catch (error) {
+    console.error(`Failed to run ${label} before seeding`, error);
+    process.exit(1);
   }
-  return path.resolve(process.cwd(), url);
 };
 
-const dbPath = resolveDbPath(DATABASE_URL);
-const migrationPath = path.join(__dirname, 'migrations/0001_init/migration.sql');
-const migrationSql = fs.readFileSync(migrationPath, 'utf8');
-
-fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-execFileSync('sqlite3', [dbPath], { input: migrationSql, encoding: 'utf8' });
-
-try {
-  execSync('npx prisma generate', {
-    stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL },
-    shell: true
-  });
-} catch (error) {
-  console.error('Failed to run prisma generate before seeding', error);
-  process.exit(1);
-}
+runPrismaCommand('npx prisma migrate deploy', 'prisma migrate deploy');
+runPrismaCommand('npx prisma generate', 'prisma generate');
 
 const { PrismaClient } = require('@prisma/client');
 

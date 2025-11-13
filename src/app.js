@@ -1,4 +1,5 @@
 const telegramInitData = window.Telegram?.WebApp?.initData || '';
+const hasTelegramInitData = Boolean(telegramInitData);
 
 let topics = [];
 
@@ -7,7 +8,8 @@ let profileState = {
   error: null,
   user: null,
   history: [],
-  likes: []
+  likes: [],
+  isAuthorized: hasTelegramInitData
 };
 
 const topicsStatus = {
@@ -63,6 +65,19 @@ const navItems = [
     `
   }
 ];
+
+const showAuthRequiredMessage = () => {
+  const message = 'Авторизуйтесь через Telegram, чтобы сохранять историю и избранное.';
+  if (window.Telegram?.WebApp?.showAlert) {
+    window.Telegram.WebApp.showAlert(message);
+    return;
+  }
+  if (typeof window.alert === 'function') {
+    window.alert(message);
+  } else {
+    console.warn(message);
+  }
+};
 
 const mapApiCard = (card) => ({
   id: `card-${card.id}`,
@@ -356,7 +371,7 @@ const renderProfileGroupList = (items, { emptyText, metaFormatter } = {}) => {
 };
 
 const renderProfile = () => {
-  const { isLoading, error, history, likes, user } = getProfileState();
+  const { isLoading, error, history, likes, user, isAuthorized } = getProfileState();
 
   if (isLoading) {
     return `<div class="info-state" data-state="loading">Загружаем профиль...</div>`;
@@ -364,6 +379,18 @@ const renderProfile = () => {
 
   if (error) {
     return `<div class="info-state" data-state="error">Не удалось загрузить профиль. ${error}</div>`;
+  }
+
+  if (!isAuthorized) {
+    return `
+      <section class="profile-layout">
+        <header class="profile-header">
+          <h1 class="profile-title">Профиль недоступен</h1>
+          <p class="profile-description">Авторизуйтесь через Telegram, чтобы отслеживать прогресс и любимые группы.</p>
+        </header>
+        <p class="info-state">Откройте мини-приложение в Telegram, чтобы сохранять историю изучения и добавлять группы в избранное.</p>
+      </section>
+    `;
   }
 
   const displayName = user?.firstName || user?.username || null;
@@ -625,6 +652,24 @@ export const createApp = (root) => {
   };
 
   const loadProfile = async ({ silent = false } = {}) => {
+    if (!hasTelegramInitData) {
+      setProfileState(
+        {
+          isLoading: false,
+          error: null,
+          user: null,
+          history: [],
+          likes: [],
+          isAuthorized: false
+        },
+        { reconcileTopics: true }
+      );
+      if (!silent && activeTab === 'profile') {
+        render();
+      }
+      return;
+    }
+
     if (!silent) {
       setProfileState({ isLoading: true, error: null });
       if (activeTab === 'profile') {
@@ -655,7 +700,8 @@ export const createApp = (root) => {
           error: null,
           user: userSummary,
           history,
-          likes
+          likes,
+          isAuthorized: true
         },
         { reconcileTopics: true }
       );
@@ -663,13 +709,33 @@ export const createApp = (root) => {
       render();
     } catch (error) {
       console.error('Не удалось загрузить профиль', error);
+      const isAuthError = error && (error.status === 401 || error.status === 403);
+      if (isAuthError) {
+        setProfileState(
+          {
+            isLoading: false,
+            error: null,
+            user: null,
+            history: [],
+            likes: [],
+            isAuthorized: false
+          },
+          { reconcileTopics: true }
+        );
+        if (!silent && activeTab === 'profile') {
+          render();
+        }
+        return;
+      }
+
       if (!silent) {
         setProfileState(
           {
             isLoading: false,
             error: 'Попробуйте обновить страницу.',
             history: [],
-            likes: []
+            likes: [],
+            isAuthorized: profileState.isAuthorized
           },
           { reconcileTopics: true }
         );
@@ -683,6 +749,11 @@ export const createApp = (root) => {
       return;
     }
 
+    const { isAuthorized } = getProfileState();
+    if (!hasTelegramInitData || !isAuthorized) {
+      return;
+    }
+
     try {
       await requestJson(`/api/groups/${groupId}/history`, { method: 'POST' });
       await loadProfile({ silent: true });
@@ -693,6 +764,12 @@ export const createApp = (root) => {
 
   const toggleGroupLike = async (groupId) => {
     if (!Number.isInteger(groupId)) {
+      return;
+    }
+
+    const { isAuthorized } = getProfileState();
+    if (!hasTelegramInitData || !isAuthorized) {
+      showAuthRequiredMessage();
       return;
     }
 
@@ -764,7 +841,10 @@ export const createApp = (root) => {
         : typeof payload === 'string' && payload
         ? payload
         : `Статус ${response.status}`;
-      throw new Error(message);
+      const error = new Error(message);
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
     }
 
     return payload;

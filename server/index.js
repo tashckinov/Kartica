@@ -67,44 +67,55 @@ const upsertUserFromTelegram = async (payload) => {
   });
 };
 
-const authenticateInitData = async (req, res) => {
+const createHttpError = (status, message) => {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+};
+
+const authenticateInitData = async (req, { required = true } = {}) => {
   try {
     const initData = req.headers['x-telegram-data'];
     if (!initData) {
-      sendError(res, 403, 'Access denied');
+      if (required) {
+        throw createHttpError(403, 'Access denied');
+      }
       return null;
     }
 
     if (!TELEGRAM_BOT_SECRET) {
-      console.error('TELEGRAM_BOT_SECRET is not configured');
-      sendError(res, 500, 'Server configuration error');
+      const message = 'TELEGRAM_BOT_SECRET is not configured';
+      if (required) {
+        console.error(message);
+        throw createHttpError(500, 'Server configuration error');
+      }
+      console.warn(message);
       return null;
     }
 
     if (!isValid(initData, TELEGRAM_BOT_SECRET)) {
-      sendError(res, 403, 'Access denied');
-      return null;
+      throw createHttpError(403, 'Access denied');
     }
 
     const telegramUser = parseTelegramUser(initData);
     if (!telegramUser) {
-      sendError(res, 401, 'Invalid token. Refresh page please');
-      return null;
+      throw createHttpError(401, 'Invalid token. Refresh page please');
     }
 
     const user = await upsertUserFromTelegram(telegramUser);
     if (!user) {
-      sendError(res, 401, 'Invalid token. Refresh page please');
-      return null;
+      throw createHttpError(401, 'Invalid token. Refresh page please');
     }
 
     req.user = user;
     req.telegram = { user: telegramUser };
     return user;
   } catch (error) {
+    if (error.status) {
+      throw error;
+    }
     console.error('Failed to authenticate request', error);
-    sendError(res, 401, 'Invalid token. Refresh page please');
-    return null;
+    throw createHttpError(401, 'Invalid token. Refresh page please');
   }
 };
 
@@ -283,13 +294,24 @@ const handleApi = async (req, res) => {
     return;
   }
 
-  const user = await authenticateInitData(req, res);
-  if (!user) {
-    return;
-  }
+  const ensureAuth = async (options) => {
+    try {
+      const authUser = await authenticateInitData(req, options);
+      return { user: authUser, halt: false };
+    } catch (error) {
+      const status = Number.isInteger(error.status) ? error.status : 401;
+      sendError(res, status, error.message || 'Invalid token. Refresh page please');
+      return { user: null, halt: true };
+    }
+  };
 
   try {
     if (parsed.pathname === '/api/me' && req.method === 'GET') {
+      const { user, halt } = await ensureAuth({ required: true });
+      if (halt) {
+        return;
+      }
+
       const [historyRecords, likedRecords] = await Promise.all([
         prisma.groupHistory.findMany({
           where: { userId: user.id },
@@ -338,7 +360,12 @@ const handleApi = async (req, res) => {
     }
 
     if (parsed.pathname === '/api/groups' && req.method === 'GET') {
-      const likedGroupIds = await getLikedGroupIdsForUser(user.id);
+      const { user, halt } = await ensureAuth({ required: false });
+      if (halt) {
+        return;
+      }
+
+      const likedGroupIds = user ? await getLikedGroupIdsForUser(user.id) : new Set();
       const groups = await prisma.group.findMany({ include: { cards: true } });
       const payload = groups.map((group) => mapGroupForResponse(group, likedGroupIds));
       sendJson(res, 200, payload);
@@ -346,6 +373,11 @@ const handleApi = async (req, res) => {
     }
 
     if (parsed.pathname === '/api/groups' && req.method === 'POST') {
+      const { halt } = await ensureAuth({ required: true });
+      if (halt) {
+        return;
+      }
+
       const body = await readBody(req);
       if (!body || !body.name) {
         sendError(res, 400, 'Поле name обязательно');
@@ -382,24 +414,39 @@ const handleApi = async (req, res) => {
       }
 
       if (segments.length === 3 && req.method === 'GET') {
+        const { user, halt } = await ensureAuth({ required: false });
+        if (halt) {
+          return;
+        }
+
         const group = await prisma.group.findUnique({ include: { cards: true }, where: { id: groupId } });
         if (!group) {
           sendError(res, 404, 'Группа не найдена');
           return;
         }
-        const likedGroupIds = await getLikedGroupIdsForUser(user.id);
+        const likedGroupIds = user ? await getLikedGroupIdsForUser(user.id) : new Set();
         sendJson(res, 200, mapGroupForResponse(group, likedGroupIds));
         return;
       }
 
       if (segments.length === 4 && segments[3] === 'cards') {
         if (req.method === 'GET') {
+          const { halt } = await ensureAuth({ required: false });
+          if (halt) {
+            return;
+          }
+
           const cards = await prisma.card.findMany({ where: { groupId } });
           sendJson(res, 200, cards);
           return;
         }
 
         if (req.method === 'POST') {
+          const { halt } = await ensureAuth({ required: true });
+          if (halt) {
+            return;
+          }
+
           const body = await readBody(req);
           if (!body || !body.translation) {
             sendError(res, 400, 'Поле translation обязательно');
@@ -426,6 +473,11 @@ const handleApi = async (req, res) => {
       }
 
       if (segments.length === 4 && segments[3] === 'history' && req.method === 'POST') {
+        const { user, halt } = await ensureAuth({ required: true });
+        if (halt) {
+          return;
+        }
+
         const group = await prisma.group.findUnique({ where: { id: groupId } });
         if (!group) {
           sendError(res, 404, 'Группа не найдена');
@@ -443,6 +495,11 @@ const handleApi = async (req, res) => {
       }
 
       if (segments.length === 4 && segments[3] === 'like') {
+        const { user, halt } = await ensureAuth({ required: true });
+        if (halt) {
+          return;
+        }
+
         const group = await prisma.group.findUnique({ where: { id: groupId } });
         if (!group) {
           sendError(res, 404, 'Группа не найдена');

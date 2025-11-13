@@ -10,8 +10,7 @@ paths:
     get:
       summary: Список групп карточек
       tags: [Groups]
-      security:
-        - TelegramInitData: []
+      security: []
       responses:
         '200':
           description: Успешный ответ
@@ -49,8 +48,7 @@ paths:
       tags: [Groups]
       parameters:
         - $ref: '#/components/parameters/GroupId'
-      security:
-        - TelegramInitData: []
+      security: []
       responses:
         '200':
           description: Найденная группа
@@ -66,8 +64,7 @@ paths:
       tags: [Cards]
       parameters:
         - $ref: '#/components/parameters/GroupId'
-      security:
-        - TelegramInitData: []
+      security: []
       responses:
         '200':
           description: Список карточек
