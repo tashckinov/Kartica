@@ -3,23 +3,28 @@ const fs = require('fs');
 const path = require('path');
 const url = require('url');
 const { execSync } = require('child_process');
-const { PrismaClient } = require('@prisma/client');
 
 const PORT = process.env.PORT || 3000;
 const DATABASE_URL = process.env.DATABASE_URL || 'file:./prisma/dev.db';
-try {
-  const command = 'npx prisma migrate deploy';
-  execSync(command, {
-    stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL },
-    shell: true
-  });
-} catch (error) {
-  console.error('Failed to run prisma migrate deploy', error);
-  process.exit(1);
-}
+const runPrismaCommand = (command, label) => {
+  try {
+    execSync(command, {
+      stdio: 'inherit',
+      env: { ...process.env, DATABASE_URL },
+      shell: true
+    });
+  } catch (error) {
+    console.error(`Failed to run ${label}`, error);
+    process.exit(1);
+  }
+};
 
-const prisma = new PrismaClient({ datasourceUrl: DATABASE_URL });
+runPrismaCommand('npx prisma generate', 'prisma generate');
+runPrismaCommand('npx prisma migrate deploy', 'prisma migrate deploy');
+
+const { PrismaClient } = require('@prisma/client');
+
+const prisma = new PrismaClient({ datasources: { db: { url: DATABASE_URL } } });
 
 const publicDir = path.join(__dirname, '..');
 const swaggerHtmlPath = path.join(__dirname, '../docs/swagger.html');

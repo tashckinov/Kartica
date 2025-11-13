@@ -1,7 +1,6 @@
 const path = require('path');
 const fs = require('fs');
-const { execFileSync } = require('child_process');
-const { PrismaClient } = require('@prisma/client');
+const { execFileSync, execSync } = require('child_process');
 
 const DATABASE_URL = process.env.DATABASE_URL || 'file:./prisma/dev.db';
 
@@ -20,7 +19,20 @@ const migrationSql = fs.readFileSync(migrationPath, 'utf8');
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 execFileSync('sqlite3', [dbPath], { input: migrationSql, encoding: 'utf8' });
 
-const prisma = new PrismaClient({ datasourceUrl: DATABASE_URL });
+try {
+  execSync('npx prisma generate', {
+    stdio: 'inherit',
+    env: { ...process.env, DATABASE_URL },
+    shell: true
+  });
+} catch (error) {
+  console.error('Failed to run prisma generate before seeding', error);
+  process.exit(1);
+}
+
+const { PrismaClient } = require('@prisma/client');
+
+const prisma = new PrismaClient({ datasources: { db: { url: DATABASE_URL } } });
 
 const coverImage = 'https://images.unsplash.com/photo-1529070538774-1843cb3265df?auto=format&fit=crop&w=1200&q=80';
 
