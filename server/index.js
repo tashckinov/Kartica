@@ -2,17 +2,17 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const url = require('url');
-const { execFileSync } = require('child_process');
+const { execSync } = require('child_process');
 const { PrismaClient } = require('@prisma/client');
 
 const PORT = process.env.PORT || 3000;
 const DATABASE_URL = process.env.DATABASE_URL || 'file:./prisma/dev.db';
-const prismaCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-
 try {
-  execFileSync(prismaCommand, ['prisma', 'migrate', 'deploy'], {
+  const command = 'npx prisma migrate deploy';
+  execSync(command, {
     stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL }
+    env: { ...process.env, DATABASE_URL },
+    shell: true
   });
 } catch (error) {
   console.error('Failed to run prisma migrate deploy', error);
