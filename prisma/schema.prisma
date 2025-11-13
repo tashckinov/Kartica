@@ -25,7 +25,7 @@ model Card {
   translation String
   original    String?
   image       String?
-  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade, map: "fk_group")
+  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
   groupId     Int      @map("group_id")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
