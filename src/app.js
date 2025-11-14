@@ -60,7 +60,7 @@ let profileState = {
 };
 
 const topicsStatus = {
-  isLoading: true,
+  isLoading: false,
   error: null
 };
 
@@ -983,25 +983,6 @@ export const createApp = (root) => {
     await loadProfile({ silent });
   };
 
-  const loadTopics = async () => {
-    updateTopicsStatus({ isLoading: true, error: null });
-    render();
-
-    try {
-      const payload = await requestJson('/api/groups');
-      const mapped = Array.isArray(payload) ? payload.map(mapApiGroup) : [];
-      setTopics(mapped);
-      updateTopicsStatus({ isLoading: false, error: null });
-      ensureActiveTopicIsValid();
-      render();
-    } catch (error) {
-      console.error('Не удалось загрузить группы', error);
-      setTopics([]);
-      updateTopicsStatus({ isLoading: false, error: 'Попробуйте обновить страницу.' });
-      render();
-    }
-  };
-
   const requestJson = async (input, { method = 'GET', body, headers = {}, signal } = {}) => {
     const nextHeaders = { ...headers };
     const init = { method, headers: nextHeaders, signal };
@@ -1203,7 +1184,6 @@ export const createApp = (root) => {
   });
 
   loadHomeUser();
-  loadTopics();
   loadProfile();
 
   return {
