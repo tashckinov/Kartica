@@ -537,6 +537,10 @@ body.study-open {
   transition: color 0.2s ease, transform 0.2s ease;
 }
 
+.nav-icon {
+  display: inline-flex;
+}
+
 .nav-button svg {
   width: 24px;
   height: 24px;
