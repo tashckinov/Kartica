@@ -1,7 +1,10 @@
 import { createApp } from './app.js';
 
 const root = document.getElementById('app');
-createApp(root);
+const telegramWebApp = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+const initialUser =
+  telegramWebApp && telegramWebApp.initDataUnsafe ? telegramWebApp.initDataUnsafe.user : null;
+const app = createApp(root, { user: initialUser });
 
 const setCSSVariable = (name, value) => {
   if (!value) return;
@@ -84,8 +87,9 @@ const ensureDefaultTheme = () => {
 
 ensureDefaultTheme();
 
-if (window.Telegram && window.Telegram.WebApp) {
-  const webApp = window.Telegram.WebApp;
+if (telegramWebApp) {
+  const webApp = telegramWebApp;
+  app.setUser(webApp.initDataUnsafe ? webApp.initDataUnsafe.user : null);
   webApp.ready();
   webApp.expand();
   applyTelegramTheme(webApp.themeParams || {});

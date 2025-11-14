@@ -55,6 +55,73 @@ const navItems = [
   }
 ];
 
+const escapeHtml = (value) => {
+  if (value === null || value === undefined) return '';
+  return String(value).replace(/[&<>"']/g, (char) => {
+    const map = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    };
+    return map[char] || char;
+  });
+};
+
+const getTrimmedString = (value) => (typeof value === 'string' ? value.trim() : '');
+
+const getUserDisplayName = (user) => {
+  if (!user) return 'Гость';
+  const firstName = getTrimmedString(user.first_name);
+  const lastName = getTrimmedString(user.last_name);
+  const username = getTrimmedString(user.username);
+  const fullName = [firstName, lastName].filter(Boolean).join(' ');
+  if (fullName) {
+    return escapeHtml(fullName);
+  }
+  if (username) {
+    return `@${escapeHtml(username)}`;
+  }
+  return 'Пользователь Telegram';
+};
+
+const getUserUsername = (user) => {
+  if (!user) return '';
+  const username = getTrimmedString(user.username);
+  return username ? `@${escapeHtml(username)}` : '';
+};
+
+const getUserInitials = (user) => {
+  if (!user) return 'Г';
+  const firstName = getTrimmedString(user.first_name);
+  const lastName = getTrimmedString(user.last_name);
+  const username = getTrimmedString(user.username);
+  const initials = `${firstName ? firstName[0] : ''}${lastName ? lastName[0] : ''}`;
+  if (initials) {
+    return escapeHtml(initials.toUpperCase());
+  }
+  if (username) {
+    return escapeHtml(username.slice(0, 2).toUpperCase());
+  }
+  return 'ТГ';
+};
+
+const getUserPhotoUrl = (user) => {
+  if (!user) return '';
+  const url = getTrimmedString(user.photo_url);
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return escapeHtml(parsed.href);
+    }
+  } catch (error) {
+    return '';
+  }
+  return '';
+};
+
 const createFlashcard = (card, { topicTitle, showTopic = false } = {}) => {
   const hasImage = Boolean(card.image);
   const hasOriginal = Boolean(card.original);
@@ -183,11 +250,34 @@ const renderTopicsHome = () => {
   `;
 };
 
-const renderProfile = () => `
+const renderProfile = (user) => {
+  const hasUser = Boolean(user);
+  const displayName = getUserDisplayName(user);
+  const username = getUserUsername(user);
+  const showUsername = Boolean(username && username !== displayName);
+  const initials = getUserInitials(user);
+  const photoUrl = getUserPhotoUrl(user);
+
+  return `
   <div class="profile-screen">
     <div class="profile-card">
       <h2>Профиль</h2>
-      <p>Здесь появится информация об успехах и прогрессе.</p>
+      <div class="profile-user">
+        ${
+          photoUrl
+            ? `<img class="profile-avatar profile-avatar-image" src="${photoUrl}" alt="${displayName}" loading="lazy" />`
+            : `<div class="profile-avatar" aria-hidden="true">${initials}</div>`
+        }
+        <div class="profile-user-info">
+          <p class="profile-name">${displayName}</p>
+          ${showUsername ? `<p class="profile-username">${username}</p>` : ''}
+        </div>
+      </div>
+      <p class="profile-hint">${
+        hasUser
+          ? 'Имя загружено из Telegram.'
+          : 'Откройте приложение в Telegram, чтобы увидеть информацию профиля.'
+      }</p>
     </div>
     <div class="profile-card">
       <h3>Советы</h3>
@@ -199,8 +289,9 @@ const renderProfile = () => `
     </div>
   </div>
 `;
+};
 
-export const createApp = (root) => {
+export const createApp = (root, options = {}) => {
   root.innerHTML = `
     <div class="app-shell">
       <main class="app-main" aria-live="polite"></main>
@@ -228,6 +319,9 @@ export const createApp = (root) => {
   const studyOverlay = root.querySelector('.study-overlay');
   let activeTab = 'home';
   let activeTopicId = null;
+  const state = {
+    user: (options && options.user) || null
+  };
   let studyState = {
     isOpen: false,
     topicId: null,
@@ -426,7 +520,7 @@ export const createApp = (root) => {
     if (activeTab === 'home') {
       main.innerHTML = renderHome();
     } else if (activeTab === 'profile') {
-      main.innerHTML = renderProfile();
+      main.innerHTML = renderProfile(state.user);
     }
     updateNav();
   };
@@ -492,6 +586,13 @@ export const createApp = (root) => {
 
   render();
 
+  const setUser = (user) => {
+    state.user = user || null;
+    if (activeTab === 'profile') {
+      render();
+    }
+  };
+
   studyOverlay.addEventListener('click', (event) => {
     const actionButton = event.target.closest('[data-action]');
     if (!actionButton) return;
@@ -539,6 +640,7 @@ export const createApp = (root) => {
       activeTab = tab;
       closeStudyMode();
       render();
-    }
+    },
+    setUser
   };
 };
