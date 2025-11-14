@@ -139,6 +139,16 @@
                 <span class="mode-title">Просмотр</span>
                 <span class="mode-subtitle">Листайте карточки одну за другой</span>
               </button>
+              <button
+                class="mode-button"
+                type="button"
+                data-mode="memorize"
+                :disabled="isTopicDetailsLoading || !canStartMemorize"
+                @click="openMemorizeMode(activeTopic.id)"
+              >
+                <span class="mode-title">Заучивание</span>
+                <span class="mode-subtitle">Выбирайте верный перевод и закрепляйте слова</span>
+              </button>
             </div>
           </section>
           <section class="topic-cards">
@@ -260,6 +270,113 @@
     </main>
     <BottomNav :items="navItems" :active="activeTab" @change="navigate" />
     <div
+      class="memorize-overlay"
+      :aria-hidden="!memorizeState.isOpen"
+      :hidden="!memorizeState.isOpen"
+      v-show="memorizeState.isOpen"
+    >
+      <div
+        v-if="memorizeTopic"
+        ref="memorizeDialog"
+        class="memorize-dialog"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="`Заучивание темы ${memorizeTopic.title}`"
+        tabindex="-1"
+        @keydown.esc.prevent="closeMemorizeMode"
+      >
+        <header class="memorize-header">
+          <button
+            class="memorize-close"
+            type="button"
+            data-action="memorize-close"
+            aria-label="Закрыть режим заучивания"
+            @click="closeMemorizeMode"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 6 12 12" />
+              <path d="m18 6-12 12" />
+            </svg>
+          </button>
+          <div class="memorize-header-text">
+            <span class="memorize-topic">{{ memorizeTopic.title }}</span>
+            <span class="memorize-progress-label">
+              {{ memorizeProgress.learned }} из {{ memorizeProgress.total }} выучено
+            </span>
+          </div>
+        </header>
+        <div
+          class="memorize-progress"
+          role="progressbar"
+          aria-live="polite"
+          :aria-valuemin="0"
+          :aria-valuemax="memorizeProgress.total"
+          :aria-valuenow="memorizeProgress.learned"
+        >
+          <div class="memorize-progress-bar">
+            <div class="memorize-progress-bar-fill" :style="{ width: `${memorizeProgressPercent}%` }"></div>
+          </div>
+        </div>
+        <section v-if="memorizeState.screen === 'prompt'" class="memorize-resume">
+          <h2 class="memorize-resume-title">Продолжить обучение?</h2>
+          <p class="memorize-resume-text">
+            У вас сохранён прогресс заучивания. Вы можете продолжить с места остановки или начать заново.
+          </p>
+          <div class="memorize-resume-actions">
+            <button class="memorize-action primary" type="button" @click="resumeMemorizeProgress">
+              Продолжить
+            </button>
+            <button class="memorize-action" type="button" @click="restartMemorizeProgress">
+              Начать заново
+            </button>
+          </div>
+        </section>
+        <section v-else-if="memorizeState.screen === 'complete'" class="memorize-complete">
+          <div class="memorize-complete-card">
+            <h2 class="memorize-complete-title">Отлично! Все слова выучены</h2>
+            <p class="memorize-complete-text">
+              Вы выбрали правильный перевод для каждого слова три раза.
+            </p>
+            <div class="memorize-complete-actions">
+              <button class="memorize-action primary" type="button" @click="restartMemorizeProgress">
+                Повторить тренировку
+              </button>
+              <button class="memorize-action" type="button" @click="closeMemorizeMode">
+                Закрыть
+              </button>
+            </div>
+          </div>
+        </section>
+        <section v-else class="memorize-content">
+          <div class="memorize-card">
+            <div v-if="memorizeCurrentCard && memorizeCurrentCard.image" class="memorize-card-media">
+              <img :src="memorizeCurrentCard.image" :alt="memorizePromptText" loading="lazy" />
+            </div>
+            <div class="memorize-card-body">
+              <span class="memorize-card-label">Слово</span>
+              <span class="memorize-card-word">{{ memorizePromptText }}</span>
+              <span v-if="memorizeCurrentCard && memorizeCurrentCard.example" class="memorize-card-example">
+                {{ memorizeCurrentCard.example }}
+              </span>
+            </div>
+          </div>
+          <div class="memorize-options" role="group" aria-label="Варианты перевода">
+            <button
+              v-for="option in memorizeOptions"
+              :key="option.id"
+              class="memorize-option"
+              type="button"
+              :data-state="getMemorizeOptionState(option)"
+              :disabled="memorizeState.isProcessingAnswer"
+              @click="selectMemorizeOption(option)"
+            >
+              {{ option.text }}
+            </button>
+          </div>
+        </section>
+      </div>
+    </div>
+    <div
       class="study-overlay"
       :aria-hidden="!studyState.isOpen"
       :hidden="!studyState.isOpen"
@@ -377,6 +494,26 @@ const studyState = reactive({
 
 const studyDialog = ref(null);
 
+const MEMORIZE_REQUIRED_SUCCESS = 3;
+const memorizeStoragePrefix = 'kartica:memorize:';
+
+const memorizeState = reactive({
+  isOpen: false,
+  topicId: null,
+  queue: [],
+  correctMap: {},
+  currentCardId: null,
+  options: [],
+  isProcessingAnswer: false,
+  screen: 'quiz',
+  resumeSnapshot: null,
+  totalAnswered: 0,
+  selectedOptionId: null,
+  revealCorrectId: null
+});
+
+const memorizeDialog = ref(null);
+
 const getTopicById = (topicId) => {
   if (!topicId) return null;
   return topics.value.find((topic) => topic.id === topicId) || null;
@@ -427,6 +564,7 @@ const activeTopicDescription = computed(() => {
   return topic.description || topic.subtitle || '';
 });
 const studyTopic = computed(() => getTopicById(studyState.topicId));
+const memorizeTopic = computed(() => getTopicById(memorizeState.topicId));
 const currentTopics = computed(() =>
   currentPageTopicIds.value
     .map((topicId) => getTopicById(topicId))
@@ -472,6 +610,12 @@ const canStartStudy = computed(() => {
     topic && topic.hasCardsLoaded && Array.isArray(topic.cards) && topic.cards.length
   );
 });
+const canStartMemorize = computed(() => {
+  const topic = activeTopic.value;
+  return Boolean(
+    topic && topic.hasCardsLoaded && Array.isArray(topic.cards) && topic.cards.length
+  );
+});
 const studyCard = computed(() => {
   const topic = studyTopic.value;
   if (!topic || !Array.isArray(topic.cards)) return null;
@@ -485,6 +629,41 @@ const studyProgress = computed(() => {
     current: Math.min(studyState.cardIndex + 1, total),
     total
   };
+});
+
+const memorizeCurrentCard = computed(() => {
+  const topic = memorizeTopic.value;
+  if (!topic || !Array.isArray(topic.cards)) return null;
+  return topic.cards.find((card) => card.id === memorizeState.currentCardId) || null;
+});
+
+const memorizePromptText = computed(() => {
+  const card = memorizeCurrentCard.value;
+  if (!card) return '';
+  return card.original || card.translation || 'Без текста';
+});
+
+const memorizeOptions = computed(() => memorizeState.options || []);
+
+const memorizeProgress = computed(() => {
+  const topic = memorizeTopic.value;
+  const cards = Array.isArray(topic?.cards) ? topic.cards : [];
+  const learned = cards.filter((card) => {
+    const score = memorizeState.correctMap?.[card.id] ?? 0;
+    return score >= MEMORIZE_REQUIRED_SUCCESS;
+  }).length;
+  return {
+    learned,
+    total: cards.length
+  };
+});
+
+const memorizeProgressPercent = computed(() => {
+  if (!memorizeProgress.value.total) return 0;
+  return Math.min(
+    100,
+    Math.round((memorizeProgress.value.learned / memorizeProgress.value.total) * 100)
+  );
 });
 
 const loadFavoritesFromStorage = () => {
@@ -508,6 +687,52 @@ const persistFavorites = () => {
     window.localStorage.setItem(favoriteStorageKey, JSON.stringify(favoriteTopicIds.value));
   } catch (error) {
     console.warn('Не удалось сохранить избранные темы', error);
+  }
+};
+
+const getMemorizeStorageKey = (topicId) => `${memorizeStoragePrefix}${topicId}`;
+
+const loadMemorizeProgress = (topicId) => {
+  if (typeof window === 'undefined' || !topicId) return null;
+  try {
+    const stored = window.localStorage.getItem(getMemorizeStorageKey(topicId));
+    if (!stored) return null;
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    const queue = Array.isArray(parsed.queue) ? parsed.queue : [];
+    const correctMap = parsed.correctMap && typeof parsed.correctMap === 'object' ? parsed.correctMap : {};
+    const totalAnswered = Number.isFinite(parsed.totalAnswered) ? parsed.totalAnswered : 0;
+    const isComplete = Boolean(parsed.isComplete);
+    return { queue, correctMap, totalAnswered, isComplete };
+  } catch (error) {
+    console.warn('Не удалось загрузить прогресс заучивания', error);
+    return null;
+  }
+};
+
+const persistMemorizeProgress = (topicId, payload) => {
+  if (typeof window === 'undefined' || !topicId) return;
+  try {
+    const data = {
+      queue: Array.isArray(payload?.queue) ? payload.queue : [],
+      correctMap: payload?.correctMap && typeof payload.correctMap === 'object' ? payload.correctMap : {},
+      totalAnswered: Number.isFinite(payload?.totalAnswered) ? payload.totalAnswered : 0,
+      isComplete: Boolean(payload?.isComplete)
+    };
+    window.localStorage.setItem(getMemorizeStorageKey(topicId), JSON.stringify(data));
+  } catch (error) {
+    console.warn('Не удалось сохранить прогресс заучивания', error);
+  }
+};
+
+const clearMemorizeProgress = (topicId) => {
+  if (typeof window === 'undefined' || !topicId) return;
+  try {
+    window.localStorage.removeItem(getMemorizeStorageKey(topicId));
+  } catch (error) {
+    console.warn('Не удалось очистить прогресс заучивания', error);
   }
 };
 
@@ -713,6 +938,286 @@ const resetStudyState = () => {
   studyState.isFlipped = false;
 };
 
+const resetMemorizeState = () => {
+  memorizeState.isOpen = false;
+  memorizeState.topicId = null;
+  memorizeState.queue = [];
+  memorizeState.correctMap = {};
+  memorizeState.currentCardId = null;
+  memorizeState.options = [];
+  memorizeState.isProcessingAnswer = false;
+  memorizeState.screen = 'quiz';
+  memorizeState.resumeSnapshot = null;
+  memorizeState.totalAnswered = 0;
+  memorizeState.selectedOptionId = null;
+  memorizeState.revealCorrectId = null;
+};
+
+const shuffleArray = (list) => {
+  const array = Array.isArray(list) ? [...list] : [];
+  for (let i = array.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+};
+
+const normalizeMemorizeCorrectMap = (cards, storedMap = {}) => {
+  const map = {};
+  cards.forEach((card) => {
+    const raw = Number(storedMap?.[card.id]);
+    if (Number.isFinite(raw) && raw > 0) {
+      map[card.id] = Math.min(
+        MEMORIZE_REQUIRED_SUCCESS,
+        Math.max(0, Math.floor(raw))
+      );
+    } else {
+      map[card.id] = 0;
+    }
+  });
+  return map;
+};
+
+const buildMemorizeQueue = (cards, correctMap, storedQueue = []) => {
+  const availableIds = new Set(cards.map((card) => card.id));
+  let queue = Array.isArray(storedQueue)
+    ? storedQueue.filter(
+        (cardId) =>
+          availableIds.has(cardId) && (correctMap[cardId] ?? 0) < MEMORIZE_REQUIRED_SUCCESS
+      )
+    : [];
+  if (!queue.length) {
+    queue = cards
+      .filter((card) => (correctMap[card.id] ?? 0) < MEMORIZE_REQUIRED_SUCCESS)
+      .map((card) => card.id);
+    queue = shuffleArray(queue);
+  }
+  return queue;
+};
+
+const getMemorizeOptionText = (card) => card.translation || card.original || 'Без перевода';
+
+const buildMemorizeOptions = (cardId, cards) => {
+  const card = cards.find((item) => item.id === cardId);
+  if (!card) return [];
+  const correctText = getMemorizeOptionText(card) || 'Без перевода';
+  const incorrectPool = cards
+    .filter((item) => item.id !== cardId)
+    .map((item) => getMemorizeOptionText(item))
+    .filter((text) => Boolean(text) && text !== correctText);
+  const uniqueIncorrect = [...new Set(incorrectPool)];
+  while (uniqueIncorrect.length < 3) {
+    uniqueIncorrect.push(`Вариант ${uniqueIncorrect.length + 1}`);
+  }
+  const incorrectOptions = uniqueIncorrect.slice(0, 3).map((text, index) => ({
+    id: `incorrect-${cardId}-${index}`,
+    text,
+    isCorrect: false
+  }));
+  const options = [
+    {
+      id: `correct-${cardId}`,
+      text: correctText,
+      isCorrect: true
+    },
+    ...incorrectOptions
+  ];
+  return shuffleArray(options);
+};
+
+const persistCurrentMemorizeState = (isCompleteOverride = null) => {
+  if (!memorizeState.topicId) return;
+  const shouldMarkComplete =
+    isCompleteOverride !== null
+      ? Boolean(isCompleteOverride)
+      : !memorizeState.queue.length && memorizeProgress.value.total > 0;
+  persistMemorizeProgress(memorizeState.topicId, {
+    queue: memorizeState.queue,
+    correctMap: memorizeState.correctMap,
+    totalAnswered: memorizeState.totalAnswered,
+    isComplete: shouldMarkComplete
+  });
+};
+
+const updateMemorizeOptions = () => {
+  const topic = memorizeTopic.value;
+  const cardId = memorizeState.currentCardId;
+  if (!topic || !Array.isArray(topic.cards) || !cardId) {
+    memorizeState.options = [];
+    return;
+  }
+  memorizeState.options = buildMemorizeOptions(cardId, topic.cards);
+};
+
+const startMemorizeSession = (topicId, snapshot = null) => {
+  const topic = getTopicById(topicId);
+  if (!topic || !topic.hasCardsLoaded || !Array.isArray(topic.cards) || !topic.cards.length) {
+    return;
+  }
+  const correctMap = normalizeMemorizeCorrectMap(topic.cards, snapshot?.correctMap);
+  const queue = buildMemorizeQueue(topic.cards, correctMap, snapshot?.queue);
+  memorizeState.topicId = topicId;
+  memorizeState.correctMap = correctMap;
+  memorizeState.queue = queue;
+  memorizeState.totalAnswered = Number.isFinite(snapshot?.totalAnswered)
+    ? snapshot.totalAnswered
+    : 0;
+  memorizeState.screen = queue.length ? 'quiz' : 'complete';
+  memorizeState.currentCardId = queue[0] ?? null;
+  memorizeState.isProcessingAnswer = false;
+  memorizeState.selectedOptionId = null;
+  memorizeState.revealCorrectId = null;
+  memorizeState.resumeSnapshot = null;
+  updateMemorizeOptions();
+  memorizeState.isOpen = true;
+  persistCurrentMemorizeState(memorizeState.screen === 'complete');
+};
+
+const resumeMemorizeProgress = () => {
+  if (!memorizeState.topicId || !memorizeState.resumeSnapshot) return;
+  startMemorizeSession(memorizeState.topicId, memorizeState.resumeSnapshot);
+};
+
+const restartMemorizeProgress = () => {
+  if (!memorizeState.topicId) return;
+  clearMemorizeProgress(memorizeState.topicId);
+  startMemorizeSession(memorizeState.topicId);
+};
+
+const openMemorizeMode = async (topicId) => {
+  if (!topicId) return;
+  const topic = getTopicById(topicId);
+  if (!topic || !topic.hasCardsLoaded || !Array.isArray(topic.cards)) {
+    try {
+      await ensureTopicDetails(topicId);
+    } catch (error) {
+      return;
+    }
+  }
+  const readyTopic = getTopicById(topicId);
+  if (!readyTopic || !Array.isArray(readyTopic.cards) || !readyTopic.cards.length) return;
+  resetStudyState();
+  const stored = loadMemorizeProgress(topicId);
+  if (stored && stored.isComplete && (!stored.queue || !stored.queue.length)) {
+    memorizeState.topicId = topicId;
+    memorizeState.correctMap = normalizeMemorizeCorrectMap(readyTopic.cards, stored.correctMap || {});
+    memorizeState.queue = [];
+    memorizeState.totalAnswered = Number.isFinite(stored.totalAnswered) ? stored.totalAnswered : 0;
+    memorizeState.screen = 'complete';
+    memorizeState.currentCardId = null;
+    memorizeState.options = [];
+    memorizeState.resumeSnapshot = null;
+    memorizeState.isProcessingAnswer = false;
+    memorizeState.selectedOptionId = null;
+    memorizeState.revealCorrectId = null;
+    memorizeState.isOpen = true;
+    persistCurrentMemorizeState(true);
+    return;
+  }
+  if (stored && Array.isArray(stored.queue) && stored.queue.length) {
+    memorizeState.topicId = topicId;
+    memorizeState.correctMap = normalizeMemorizeCorrectMap(readyTopic.cards, stored.correctMap || {});
+    memorizeState.queue = [...stored.queue];
+    memorizeState.totalAnswered = Number.isFinite(stored.totalAnswered) ? stored.totalAnswered : 0;
+    memorizeState.screen = 'prompt';
+    memorizeState.currentCardId = null;
+    memorizeState.options = [];
+    memorizeState.selectedOptionId = null;
+    memorizeState.revealCorrectId = null;
+    memorizeState.isProcessingAnswer = false;
+    memorizeState.resumeSnapshot = {
+      queue: [...stored.queue],
+      correctMap: { ...stored.correctMap },
+      totalAnswered: stored.totalAnswered,
+      isComplete: Boolean(stored.isComplete)
+    };
+    memorizeState.isOpen = true;
+    return;
+  }
+  startMemorizeSession(topicId);
+};
+
+const persistMemorizeAndResetSelection = () => {
+  memorizeState.selectedOptionId = null;
+  memorizeState.revealCorrectId = null;
+  memorizeState.isProcessingAnswer = false;
+};
+
+const applyMemorizeAnswer = (isCorrect) => {
+  const currentId = memorizeState.currentCardId;
+  const topic = memorizeTopic.value;
+  if (!currentId || !topic || !Array.isArray(topic.cards)) {
+    persistMemorizeAndResetSelection();
+    return;
+  }
+  const queue = Array.isArray(memorizeState.queue) ? [...memorizeState.queue] : [];
+  queue.shift();
+  if (isCorrect) {
+    const nextScore = Math.min(
+      MEMORIZE_REQUIRED_SUCCESS,
+      (memorizeState.correctMap?.[currentId] ?? 0) + 1
+    );
+    memorizeState.correctMap = {
+      ...memorizeState.correctMap,
+      [currentId]: nextScore
+    };
+    if (nextScore < MEMORIZE_REQUIRED_SUCCESS) {
+      queue.push(currentId);
+    }
+  } else {
+    queue.push(currentId);
+  }
+  memorizeState.queue = queue;
+  memorizeState.totalAnswered += 1;
+  if (!queue.length) {
+    memorizeState.currentCardId = null;
+    memorizeState.options = [];
+    memorizeState.screen = 'complete';
+    persistCurrentMemorizeState(true);
+  } else {
+    memorizeState.currentCardId = queue[0];
+    memorizeState.screen = 'quiz';
+    updateMemorizeOptions();
+    persistCurrentMemorizeState(false);
+  }
+  persistMemorizeAndResetSelection();
+};
+
+const selectMemorizeOption = (option) => {
+  if (memorizeState.screen !== 'quiz' || memorizeState.isProcessingAnswer || !option) return;
+  memorizeState.isProcessingAnswer = true;
+  memorizeState.selectedOptionId = option.id;
+  if (option.isCorrect) {
+    memorizeState.revealCorrectId = option.id;
+  } else {
+    const correctOption = memorizeOptions.value.find((item) => item.isCorrect);
+    memorizeState.revealCorrectId = correctOption ? correctOption.id : null;
+  }
+  const delay = typeof window !== 'undefined' && typeof window.setTimeout === 'function'
+    ? window.setTimeout
+    : setTimeout;
+  delay(() => {
+    applyMemorizeAnswer(Boolean(option.isCorrect));
+  }, 260);
+};
+
+const getMemorizeOptionState = (option) => {
+  if (!option) return 'idle';
+  if (option.id === memorizeState.selectedOptionId) {
+    return option.isCorrect ? 'correct' : 'incorrect';
+  }
+  if (memorizeState.revealCorrectId && option.id === memorizeState.revealCorrectId) {
+    return 'correct';
+  }
+  return 'idle';
+};
+
+const closeMemorizeMode = () => {
+  if (!memorizeState.isOpen) return;
+  persistCurrentMemorizeState(memorizeState.screen === 'complete');
+  resetMemorizeState();
+};
+
 const loadTopics = async (page = topicsPagination.page || 1) => {
   if (isTopicsLoading.value) return;
   const targetPage = Math.max(page, 1);
@@ -821,6 +1326,10 @@ const ensureTopicDetails = async (topicId) => {
 const navigate = (tab) => {
   if (tab === activeTab.value) return;
   resetStudyState();
+  if (memorizeState.topicId) {
+    persistCurrentMemorizeState(memorizeState.screen === 'complete');
+  }
+  resetMemorizeState();
   activeTopicId.value = null;
   topicDetailsError.value = '';
   isTopicDetailsLoading.value = false;
@@ -842,6 +1351,10 @@ const openTopicFromFavorites = async (topicId) => {
 const showTopic = async (topicId) => {
   if (!topicId) return;
   topicDetailsError.value = '';
+  if (memorizeState.topicId) {
+    persistCurrentMemorizeState(memorizeState.screen === 'complete');
+  }
+  resetMemorizeState();
   if (activeTopicId.value !== topicId) {
     activeTopicId.value = topicId;
   }
@@ -858,6 +1371,10 @@ const showTopicsList = () => {
   topicDetailsError.value = '';
   isTopicDetailsLoading.value = false;
   resetStudyState();
+  if (memorizeState.topicId) {
+    persistCurrentMemorizeState(memorizeState.screen === 'complete');
+  }
+  resetMemorizeState();
 };
 
 const openStudyMode = (topicId, startIndex = 0) => {
@@ -962,6 +1479,28 @@ watch(studyCard, (card) => {
   }
 });
 
+watch(
+  () => memorizeState.isOpen,
+  (isOpen) => {
+    document.body.classList.toggle('memorize-open', isOpen);
+    if (isOpen) {
+      nextTick(() => {
+        if (memorizeDialog.value) {
+          memorizeDialog.value.focus();
+        }
+      });
+    }
+  }
+);
+
+watch(memorizeTopic, (topic) => {
+  if (!topic && memorizeState.isOpen) {
+    resetMemorizeState();
+  } else if (topic && memorizeState.isOpen && memorizeState.currentCardId) {
+    updateMemorizeOptions();
+  }
+});
+
 onMounted(() => {
   loadFavoritesFromStorage();
   initTelegramIntegration();
@@ -971,5 +1510,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.body.classList.remove('study-open');
+  document.body.classList.remove('memorize-open');
 });
 </script>
