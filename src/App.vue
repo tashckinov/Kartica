@@ -1,38 +1,106 @@
 <template>
   <div class="app-shell">
     <main class="app-main" aria-live="polite">
-      <template v-if="activeTab === 'home'">
-        <template v-if="!activeTopic">
-          <header class="app-header">
-            <h1 class="app-title">Изучаем языки с карточками</h1>
-            <p class="app-subtitle">Выберите тему, чтобы открыть карточки и начать обучение.</p>
-          </header>
-          <section v-if="isTopicsLoading" class="data-state" aria-live="polite">
-            <div class="state-card">
-              <span class="state-title">Загружаем темы…</span>
-              <span class="state-subtitle">Подождите немного, мы получаем данные из базы.</span>
+      <template v-if="activeTab === 'profile'">
+        <div class="profile-screen">
+          <div class="profile-card">
+            <h2>Профиль</h2>
+            <div v-if="isProfileReady" class="profile-user" data-telegram-user>
+              <div class="profile-avatar" :data-has-photo="hasProfilePhoto ? 'true' : 'false'">
+                <img
+                  v-if="hasProfilePhoto"
+                  :src="userProfile.photoUrl"
+                  :alt="`Аватар пользователя ${profileDisplayName}`"
+                  loading="lazy"
+                />
+                <svg
+                  v-else
+                  class="profile-avatar-placeholder"
+                  viewBox="0 0 64 64"
+                  focusable="false"
+                  role="img"
+                  :aria-label="profileAvatarFallbackLabel"
+                >
+                  <circle cx="32" cy="32" r="30" fill="currentColor" opacity="0.12" />
+                  <circle cx="32" cy="26" r="12" fill="none" stroke="currentColor" stroke-width="2.4" />
+                  <path
+                    d="M18 52c0-8.84 6.82-16 14-16s14 7.16 14 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              </div>
+              <div class="profile-user-info">
+                <span class="profile-user-name">{{ profileDisplayName }}</span>
+                <span v-if="showProfileUsername" class="profile-user-username">@{{ userProfile.username }}</span>
+                <span v-if="userProfile.languageCode" class="profile-user-language">
+                  Язык интерфейса: {{ userProfile.languageCode.toUpperCase() }}
+                </span>
+              </div>
             </div>
-          </section>
-          <section v-else-if="topicsError" class="data-state" aria-live="assertive">
-            <div class="state-card">
-              <span class="state-title">Не удалось загрузить темы</span>
-              <p class="state-subtitle">{{ topicsError }}</p>
-              <button class="state-action" type="button" @click="reloadTopics">Попробовать снова</button>
+            <p v-else class="profile-placeholder">{{ profileFallbackText }}</p>
+          </div>
+          <div class="profile-card">
+            <h3>Советы</h3>
+            <ul>
+              <li>Повторяйте карточки каждый день.</li>
+              <li>Добавляйте свои темы, когда появится возможность.</li>
+              <li>Используйте приложение в Telegram mini app для синхронизации.</li>
+            </ul>
+          </div>
+          <div class="profile-card profile-favorites">
+            <h3>Избранные темы</h3>
+            <div v-if="isFavoritesLoading" class="profile-favorites-state" aria-live="polite">
+              <span class="profile-favorites-text">Загружаем избранное…</span>
             </div>
-          </section>
-          <template v-else>
-            <section v-if="topics.length" class="topics-grid">
+            <div v-else-if="favoritesError" class="profile-favorites-state" role="alert">
+              <span class="profile-favorites-text">{{ favoritesError }}</span>
+              <button class="profile-favorites-retry" type="button" @click="retryFavorites">
+                Попробовать снова
+              </button>
+            </div>
+            <div v-else-if="profileFavoriteTopics.length" class="profile-favorites-grid">
               <article
-                v-for="topic in topics"
+                v-for="topic in profileFavoriteTopics"
                 :key="topic.id"
-                class="topic-card"
+                class="topic-card profile-favorite-card"
                 role="button"
                 tabindex="0"
                 :data-topic-card="topic.id"
-                @click="showTopic(topic.id)"
-                @keydown.enter.prevent="showTopic(topic.id)"
-                @keydown.space.prevent="showTopic(topic.id)"
+                @click="openTopicFromFavorites(topic.id)"
+                @keydown.enter.prevent="openTopicFromFavorites(topic.id)"
+                @keydown.space.prevent="openTopicFromFavorites(topic.id)"
               >
+                <button
+                  class="topic-card-favorite"
+                  type="button"
+                  :aria-pressed="isTopicFavorite(topic.id) ? 'true' : 'false'"
+                  :data-favorite="isTopicFavorite(topic.id) ? 'true' : 'false'"
+                  @click.stop="toggleFavorite(topic.id, { preserveCard: true })"
+                >
+                  <span class="visually-hidden">
+                    {{ favoriteToggleText(topic.id) }}
+                  </span>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path
+                      :d="
+                        isTopicFavorite(topic.id)
+                          ? 'M12 4.5 14.89 9.8l5.61.82-4.05 3.95.95 5.55L12 16.98 6.6 20.12l.95-5.55L3.5 10.62l5.61-.82z'
+                          : 'm12 5.19 1.96 3.98 4.4.64-3.18 3.1.75 4.37L12 14.77l-3.93 2.51.75-4.37-3.18-3.1 4.4-.64z'
+                      "
+                      :fill="isTopicFavorite(topic.id) ? 'currentColor' : 'none'"
+                    />
+                  </svg>
+                </button>
                 <div class="topic-card-cover">
                   <img v-if="topic.coverImage" :src="topic.coverImage" :alt="topic.title" loading="lazy" />
                   <div v-else class="topic-card-placeholder" aria-hidden="true"></div>
@@ -45,63 +113,53 @@
                   <p v-if="topic.subtitle" class="topic-card-subtitle">{{ topic.subtitle }}</p>
                 </div>
               </article>
-            </section>
-            <div v-else class="empty-state">
-              Темы появятся здесь, как только вы добавите новую группу карточек.
             </div>
-            <nav
-              v-if="topics.length && topicsPagination.totalPages > 1"
-              class="topics-pagination"
-              aria-label="Пагинация тем"
-            >
-              <button
-                class="pagination-button"
-                type="button"
-                :disabled="isTopicsLoading || topicsPagination.page <= 1"
-                @click="changeTopicsPage(topicsPagination.page - 1)"
-              >
-                Назад
-              </button>
-              <span class="pagination-status">
-                Страница {{ topicsPagination.page }} из {{ topicsPagination.totalPages }}
-              </span>
-              <button
-                class="pagination-button"
-                type="button"
-                :disabled="
-                  isTopicsLoading || topicsPagination.page >= topicsPagination.totalPages
-                "
-                @click="changeTopicsPage(topicsPagination.page + 1)"
-              >
-                Вперёд
-              </button>
-            </nav>
-          </template>
-        </template>
-        <section v-else class="topic-detail" :data-topic-detail="activeTopic.id">
+            <p v-else class="profile-favorites-empty">
+              Добавьте группы в избранное, чтобы видеть их здесь.
+            </p>
+          </div>
+        </div>
+      </template>
+      <template v-else>
+        <section v-if="activeTopic" class="topic-detail" :data-topic-detail="activeTopic.id">
           <header class="topic-detail-header">
-            <button
-              class="back-button"
-              type="button"
-              data-action="back-to-topics"
-              aria-label="Вернуться к списку тем"
-              @click="showTopicsList"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="m15 6-6 6 6 6" />
-              </svg>
-            </button>
-            <div class="topic-detail-titles">
-              <span class="topic-detail-label">Тема</span>
-              <h1 class="topic-detail-title">{{ activeTopic.title }}</h1>
-              <p v-if="activeTopic.subtitle" class="topic-detail-subtitle">{{ activeTopic.subtitle }}</p>
+            <div class="topic-detail-top">
+              <button
+                class="back-button"
+                type="button"
+                data-action="back-to-topics"
+                aria-label="Вернуться к списку тем"
+                @click="showTopicsList"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m15 6-6 6 6 6" />
+                </svg>
+              </button>
+              <button
+                class="favorite-toggle"
+                type="button"
+                :aria-pressed="isActiveTopicFavorite ? 'true' : 'false'"
+                :data-favorite="isActiveTopicFavorite ? 'true' : 'false'"
+                @click="toggleFavorite(activeTopic.id)"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path
+                    :d="
+                      isActiveTopicFavorite
+                        ? 'M12 4.5 14.89 9.8l5.61.82-4.05 3.95.95 5.55L12 16.98 6.6 20.12l.95-5.55L3.5 10.62l5.61-.82z'
+                        : 'm12 5.19 1.96 3.98 4.4.64-3.18 3.1.75 4.37L12 14.77l-3.93 2.51.75-4.37-3.18-3.1 4.4-.64z'
+                    "
+                    :fill="isActiveTopicFavorite ? 'currentColor' : 'none'"
+                  />
+                </svg>
+                <span class="favorite-toggle-label">
+                  {{ isActiveTopicFavorite ? 'В избранном' : 'В избранное' }}
+                </span>
+              </button>
             </div>
+            <h1 class="topic-detail-title">{{ activeTopic.title }}</h1>
+            <p v-if="activeTopicDescription" class="topic-detail-description">{{ activeTopicDescription }}</p>
           </header>
-          <section class="topic-hero">
-            <img v-if="activeTopic.coverImage" :src="activeTopic.coverImage" :alt="activeTopic.title" loading="lazy" />
-            <div v-else class="topic-hero-placeholder">Добавьте обложку для темы</div>
-            <p v-if="activeTopic.description" class="topic-detail-description">{{ activeTopic.description }}</p>
-          </section>
           <section class="topic-modes">
             <h2 class="topic-modes-title">Режимы</h2>
             <div class="topic-modes-grid">
@@ -156,22 +214,82 @@
             </div>
           </section>
         </section>
-      </template>
-      <template v-else>
-        <div class="profile-screen">
-          <div class="profile-card">
-            <h2>Профиль</h2>
-            <p>Здесь появится информация об успехах и прогрессе.</p>
-          </div>
-          <div class="profile-card">
-            <h3>Советы</h3>
-            <ul>
-              <li>Повторяйте карточки каждый день.</li>
-              <li>Добавляйте свои темы, когда появится возможность.</li>
-              <li>Используйте приложение в Telegram mini app для синхронизации.</li>
-            </ul>
-          </div>
-        </div>
+        <template v-else>
+          <header class="app-header">
+            <h1 class="app-title">Изучаем языки с карточками</h1>
+            <p class="app-subtitle">Выберите тему, чтобы открыть карточки и начать обучение.</p>
+          </header>
+          <section v-if="isTopicsLoading" class="data-state" aria-live="polite">
+            <div class="state-card">
+              <span class="state-title">Загружаем темы…</span>
+              <span class="state-subtitle">Подождите немного, мы получаем данные из базы.</span>
+            </div>
+          </section>
+          <section v-else-if="topicsError" class="data-state" aria-live="assertive">
+            <div class="state-card">
+              <span class="state-title">Не удалось загрузить темы</span>
+              <p class="state-subtitle">{{ topicsError }}</p>
+              <button class="state-action" type="button" @click="reloadTopics">Попробовать снова</button>
+            </div>
+          </section>
+          <template v-else>
+            <section v-if="currentTopics.length" class="topics-grid">
+              <article
+                v-for="topic in currentTopics"
+                :key="topic.id"
+                class="topic-card"
+                role="button"
+                tabindex="0"
+                :data-topic-card="topic.id"
+                @click="showTopic(topic.id)"
+                @keydown.enter.prevent="showTopic(topic.id)"
+                @keydown.space.prevent="showTopic(topic.id)"
+              >
+                <div class="topic-card-cover">
+                  <img v-if="topic.coverImage" :src="topic.coverImage" :alt="topic.title" loading="lazy" />
+                  <div v-else class="topic-card-placeholder" aria-hidden="true"></div>
+                  <span class="topic-card-badge">
+                    {{ getCardsCount(topic) }} {{ getCardWord(getCardsCount(topic)) }}
+                  </span>
+                </div>
+                <div class="topic-card-body">
+                  <h2 class="topic-card-title">{{ topic.title }}</h2>
+                  <p v-if="topic.subtitle" class="topic-card-subtitle">{{ topic.subtitle }}</p>
+                </div>
+              </article>
+            </section>
+            <div v-else class="empty-state">
+              Темы появятся здесь, как только вы добавите новую группу карточек.
+            </div>
+            <nav
+              v-if="currentTopics.length && topicsPagination.totalPages > 1"
+              class="topics-pagination"
+              aria-label="Пагинация тем"
+            >
+              <button
+                class="pagination-button"
+                type="button"
+                :disabled="isTopicsLoading || topicsPagination.page <= 1"
+                @click="changeTopicsPage(topicsPagination.page - 1)"
+              >
+                Назад
+              </button>
+              <span class="pagination-status">
+                Страница {{ topicsPagination.page }} из {{ topicsPagination.totalPages }}
+              </span>
+              <button
+                class="pagination-button"
+                type="button"
+                :disabled="
+                  isTopicsLoading || topicsPagination.page >= topicsPagination.totalPages
+                "
+                @click="changeTopicsPage(topicsPagination.page + 1)"
+              >
+                Вперёд
+              </button>
+            </nav>
+          </template>
+        </template>
       </template>
     </main>
     <BottomNav :items="navItems" :active="activeTab" @change="navigate" />
@@ -262,6 +380,7 @@ import { navItems } from './data/navigation.js';
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000').replace(/\/$/, '');
 
 const topics = ref([]);
+const currentPageTopicIds = ref([]);
 const isTopicsLoading = ref(false);
 const topicsError = ref('');
 const topicsPagination = reactive({
@@ -277,6 +396,12 @@ const topicDetailsError = ref('');
 const activeTab = ref('home');
 const activeTopicId = ref(null);
 
+const favoriteStorageKey = 'kartica:favorites';
+const favoriteTopicIds = ref([]);
+const sessionRemovedFavoriteTopicIds = ref([]);
+const isFavoritesLoading = ref(false);
+const favoritesError = ref('');
+
 const studyState = reactive({
   isOpen: false,
   topicId: null,
@@ -286,12 +411,84 @@ const studyState = reactive({
 
 const studyDialog = ref(null);
 
-const activeTopic = computed(
-  () => topics.value.find((topic) => topic.id === activeTopicId.value) || null
+const getTopicById = (topicId) => {
+  if (!topicId) return null;
+  return topics.value.find((topic) => topic.id === topicId) || null;
+};
+
+const upsertTopic = (partialTopic = {}) => {
+  if (!partialTopic || !partialTopic.id) {
+    return null;
+  }
+  const index = topics.value.findIndex((topic) => topic.id === partialTopic.id);
+  const existing = index !== -1 ? topics.value[index] : null;
+  const merged = {
+    id: partialTopic.id,
+    title: partialTopic.title ?? existing?.title ?? '',
+    subtitle: partialTopic.subtitle ?? existing?.subtitle ?? '',
+    description: partialTopic.description ?? existing?.description ?? '',
+    coverImage:
+      partialTopic.coverImage !== undefined
+        ? partialTopic.coverImage
+        : existing?.coverImage ?? null,
+    cards:
+      partialTopic.cards !== undefined
+        ? partialTopic.cards
+        : existing?.cards ?? [],
+    cardsCount:
+      typeof partialTopic.cardsCount === 'number'
+        ? partialTopic.cardsCount
+        : partialTopic.cards
+        ? partialTopic.cards.length
+        : existing?.cardsCount ?? (Array.isArray(existing?.cards) ? existing.cards.length : 0),
+    hasCardsLoaded:
+      partialTopic.hasCardsLoaded !== undefined
+        ? partialTopic.hasCardsLoaded
+        : existing?.hasCardsLoaded ?? false
+  };
+  if (index !== -1) {
+    topics.value.splice(index, 1, merged);
+  } else {
+    topics.value.push(merged);
+  }
+  return merged;
+};
+
+const activeTopic = computed(() => getTopicById(activeTopicId.value));
+const activeTopicDescription = computed(() => {
+  const topic = activeTopic.value;
+  if (!topic) return '';
+  return topic.description || topic.subtitle || '';
+});
+const studyTopic = computed(() => getTopicById(studyState.topicId));
+const currentTopics = computed(() =>
+  currentPageTopicIds.value
+    .map((topicId) => getTopicById(topicId))
+    .filter((topic) => topic !== null)
 );
-const studyTopic = computed(
-  () => topics.value.find((topic) => topic.id === studyState.topicId) || null
+
+const favoriteTopicsSet = computed(() => new Set(favoriteTopicIds.value));
+const favoriteTopics = computed(() =>
+  favoriteTopicIds.value
+    .map((topicId) => getTopicById(topicId))
+    .filter((topic) => topic !== null)
 );
+const profileFavoriteTopics = computed(() => {
+  const visibleRemovedTopics = sessionRemovedFavoriteTopicIds.value
+    .map((topicId) => getTopicById(topicId))
+    .filter((topic) => topic !== null && !favoriteTopicsSet.value.has(topic.id));
+  return [...favoriteTopics.value, ...visibleRemovedTopics];
+});
+const isTopicFavorite = (topicId) => favoriteTopicsSet.value.has(topicId);
+const isActiveTopicFavorite = computed(() => {
+  const topic = activeTopic.value;
+  if (!topic) return false;
+  return isTopicFavorite(topic.id);
+});
+const favoriteToggleText = (topicId) =>
+  isTopicFavorite(topicId)
+    ? 'Удалить тему из избранного'
+    : 'Добавить тему в избранное';
 const activeTopicCardsCount = computed(() => {
   const topic = activeTopic.value;
   if (!topic) return 0;
@@ -322,6 +519,245 @@ const studyProgress = computed(() => {
     current: Math.min(studyState.cardIndex + 1, total),
     total
   };
+});
+
+const loadFavoritesFromStorage = () => {
+  if (typeof window === 'undefined') return;
+  try {
+    const stored = window.localStorage.getItem(favoriteStorageKey);
+    if (!stored) return;
+    const parsed = JSON.parse(stored);
+    if (Array.isArray(parsed)) {
+      const filtered = parsed.filter((id) => id !== null && id !== undefined);
+      favoriteTopicIds.value = [...new Set(filtered)];
+    }
+  } catch (error) {
+    console.warn('Не удалось загрузить избранные темы из памяти', error);
+  }
+};
+
+const persistFavorites = () => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(favoriteStorageKey, JSON.stringify(favoriteTopicIds.value));
+  } catch (error) {
+    console.warn('Не удалось сохранить избранные темы', error);
+  }
+};
+
+const ensureFavoriteTopicsLoaded = async () => {
+  if (!favoriteTopicIds.value.length) {
+    favoritesError.value = '';
+    return;
+  }
+  if (isFavoritesLoading.value) return;
+  const missingIds = favoriteTopicIds.value.filter((topicId) => !getTopicById(topicId));
+  if (!missingIds.length) {
+    favoritesError.value = '';
+    return;
+  }
+  isFavoritesLoading.value = true;
+  favoritesError.value = '';
+  const results = await Promise.allSettled(
+    missingIds.map(async (topicId) => {
+      try {
+        const response = await fetch(buildApiUrl(`/groups/${topicId}`));
+        if (!response.ok) {
+          throw new Error(`Request failed with status ${response.status}`);
+        }
+        const data = await response.json();
+        const cards = (data.cards || []).map((card) => ({
+          id: card.id,
+          translation: card.definition,
+          original: card.term,
+          image: null,
+          example: card.example || ''
+        }));
+        upsertTopic({
+          id: data.id ?? topicId,
+          title: data.title,
+          subtitle: data.description || '',
+          description: data.description || '',
+          coverImage: null,
+          cards,
+          cardsCount: cards.length,
+          hasCardsLoaded: true
+        });
+      } catch (error) {
+        console.error('Failed to load favorite topic', error);
+        throw error;
+      }
+    })
+  );
+  if (results.some((result) => result.status === 'rejected')) {
+    favoritesError.value = 'Не удалось загрузить часть избранных тем. Попробуйте обновить страницу.';
+  }
+  isFavoritesLoading.value = false;
+};
+
+const retryFavorites = () => {
+  favoritesError.value = '';
+  ensureFavoriteTopicsLoaded();
+};
+
+const removeSessionFavorite = (topicId) => {
+  if (!sessionRemovedFavoriteTopicIds.value.length) return;
+  sessionRemovedFavoriteTopicIds.value = sessionRemovedFavoriteTopicIds.value.filter(
+    (id) => id !== topicId
+  );
+};
+
+const rememberSessionFavorite = (topicId) => {
+  if (!sessionRemovedFavoriteTopicIds.value.includes(topicId)) {
+    sessionRemovedFavoriteTopicIds.value = [
+      ...sessionRemovedFavoriteTopicIds.value,
+      topicId
+    ];
+  }
+};
+
+const toggleFavorite = async (topicId, options = {}) => {
+  if (!topicId) return;
+  const preserveCard = Boolean(options.preserveCard);
+  if (isTopicFavorite(topicId)) {
+    favoriteTopicIds.value = favoriteTopicIds.value.filter((id) => id !== topicId);
+    if (preserveCard) {
+      rememberSessionFavorite(topicId);
+    } else {
+      removeSessionFavorite(topicId);
+    }
+    return;
+  }
+  favoriteTopicIds.value = [...favoriteTopicIds.value, topicId];
+  removeSessionFavorite(topicId);
+  if (!getTopicById(topicId)) {
+    try {
+      await ensureTopicDetails(topicId);
+    } catch (error) {
+      console.warn('Не удалось загрузить тему при добавлении в избранное', error);
+    }
+  }
+};
+
+const userProfile = reactive({
+  id: null,
+  username: '',
+  firstName: '',
+  lastName: '',
+  photoUrl: '',
+  languageCode: ''
+});
+const isTelegramEnvironment = ref(false);
+
+const setUserProfile = (user = {}) => {
+  userProfile.id = user.id ?? null;
+  userProfile.username = user.username ?? '';
+  userProfile.firstName = user.first_name ?? user.firstName ?? '';
+  userProfile.lastName = user.last_name ?? user.lastName ?? '';
+  userProfile.photoUrl = user.photo_url ?? user.photoUrl ?? '';
+  userProfile.languageCode = user.language_code ?? user.languageCode ?? '';
+};
+
+const parseTelegramUserFromInitData = (initData) => {
+  if (!initData || typeof initData !== 'string') {
+    return null;
+  }
+  try {
+    const params = new URLSearchParams(initData);
+    const rawUser = params.get('user');
+    if (!rawUser) {
+      return null;
+    }
+    return JSON.parse(rawUser);
+  } catch (error) {
+    console.warn('Не удалось разобрать пользователя из initData', error);
+    return null;
+  }
+};
+
+const initTelegramIntegration = () => {
+  const webApp = window.Telegram?.WebApp;
+  let initData = '';
+  let telegramUser = null;
+
+  if (webApp) {
+    isTelegramEnvironment.value = true;
+    initData = webApp.initData || '';
+    telegramUser = webApp.initDataUnsafe?.user || null;
+  }
+
+  if (!telegramUser && !initData) {
+    const params = new URLSearchParams(window.location.search);
+    initData = params.get('tgWebAppInitData') || params.get('initData') || '';
+    if (initData) {
+      isTelegramEnvironment.value = true;
+    }
+  }
+
+  if (!telegramUser) {
+    telegramUser = parseTelegramUserFromInitData(initData) || null;
+  }
+
+  if (telegramUser) {
+    setUserProfile(telegramUser);
+  }
+};
+
+const profileNameParts = computed(() =>
+  [userProfile.firstName, userProfile.lastName]
+    .map((part) => (typeof part === 'string' ? part.trim() : ''))
+    .filter(Boolean)
+);
+
+const profileDisplayName = computed(() => {
+  if (profileNameParts.value.length) {
+    return profileNameParts.value.join(' ');
+  }
+  if (userProfile.username) {
+    return `@${userProfile.username}`;
+  }
+  return '';
+});
+
+const profileInitials = computed(() => {
+  if (profileNameParts.value.length) {
+    return profileNameParts.value
+      .map((part) => part.charAt(0))
+      .join('')
+      .slice(0, 2)
+      .toUpperCase();
+  }
+  if (userProfile.username) {
+    return userProfile.username.slice(0, 2).toUpperCase();
+  }
+  return 'TG';
+});
+
+const hasProfilePhoto = computed(
+  () => typeof userProfile.photoUrl === 'string' && userProfile.photoUrl.trim().length > 0
+);
+
+const profileAvatarFallbackLabel = computed(() => {
+  if (profileDisplayName.value) {
+    return `У пользователя ${profileDisplayName.value} пока нет аватарки`;
+  }
+  if (profileInitials.value) {
+    return `У пользователя с инициалами ${profileInitials.value} пока нет аватарки`;
+  }
+  return 'У пользователя пока нет аватарки';
+});
+
+const isProfileReady = computed(() => Boolean(profileDisplayName.value));
+
+const showProfileUsername = computed(
+  () => profileNameParts.value.length > 0 && Boolean(userProfile.username)
+);
+
+const profileFallbackText = computed(() => {
+  if (!isTelegramEnvironment.value) {
+    return 'Откройте приложение в Telegram Mini App, чтобы увидеть информацию профиля.';
+  }
+  return 'Telegram не передал данные пользователя.';
 });
 
 const buildApiUrl = (path, params = {}) => {
@@ -358,27 +794,28 @@ const loadTopics = async (page = topicsPagination.page || 1) => {
       throw new Error(`Request failed with status ${response.status}`);
     }
     const payload = await response.json();
-    const previousTopics = new Map(topics.value.map((topic) => [topic.id, topic]));
     topicsPagination.page = payload.pagination.page;
     topicsPagination.pageSize = payload.pagination.pageSize;
     topicsPagination.total = payload.pagination.total;
     topicsPagination.totalPages = payload.pagination.totalPages;
-    topics.value = payload.data.map((group) => {
-      const existing = previousTopics.get(group.id);
-      const cards = existing?.cards ?? [];
-      const hasCardsLoaded = Boolean(existing?.hasCardsLoaded);
-      return {
+    currentPageTopicIds.value = payload.data.map((group) => group.id);
+    payload.data.forEach((group) => {
+      const existing = getTopicById(group.id);
+      upsertTopic({
         id: group.id,
         title: group.title,
-        subtitle: group.description || '',
-        description: group.description || '',
+        subtitle: group.description || existing?.subtitle || '',
+        description: group.description || existing?.description || '',
         coverImage: existing?.coverImage ?? null,
-        cards,
-        cardsCount: group.cardsCount ?? (Array.isArray(cards) ? cards.length : 0),
-        hasCardsLoaded
-      };
+        cards: existing?.cards ?? [],
+        cardsCount:
+          typeof group.cardsCount === 'number'
+            ? group.cardsCount
+            : existing?.cardsCount ?? (Array.isArray(existing?.cards) ? existing.cards.length : 0),
+        hasCardsLoaded: existing?.hasCardsLoaded ?? false
+      });
     });
-    if (!topics.value.some((topic) => topic.id === activeTopicId.value)) {
+    if (!getTopicById(activeTopicId.value)) {
       activeTopicId.value = null;
       resetStudyState();
     }
@@ -406,10 +843,8 @@ const reloadTopics = () => {
 };
 
 const ensureTopicDetails = async (topicId) => {
-  const topicIndex = topics.value.findIndex((topic) => topic.id === topicId);
-  if (topicIndex === -1) return null;
-  const topic = topics.value[topicIndex];
-  if (topic.hasCardsLoaded) {
+  const topic = getTopicById(topicId);
+  if (topic && topic.hasCardsLoaded) {
     return topic;
   }
   isTopicDetailsLoading.value = true;
@@ -427,16 +862,16 @@ const ensureTopicDetails = async (topicId) => {
       image: null,
       example: card.example || ''
     }));
-    const updatedTopic = {
-      ...topic,
+    const updatedTopic = upsertTopic({
+      id: data.id ?? topicId,
       title: data.title,
-      subtitle: data.description || topic.subtitle,
-      description: data.description || topic.description,
+      subtitle: data.description || topic?.subtitle || '',
+      description: data.description || topic?.description || '',
+      coverImage: topic?.coverImage ?? null,
       cards,
       cardsCount: cards.length,
       hasCardsLoaded: true
-    };
-    topics.value.splice(topicIndex, 1, updatedTopic);
+    });
     return updatedTopic;
   } catch (error) {
     topicDetailsError.value = 'Попробуйте обновить страницу или повторить позже.';
@@ -450,17 +885,27 @@ const ensureTopicDetails = async (topicId) => {
 const navigate = (tab) => {
   if (tab === activeTab.value) return;
   resetStudyState();
+  activeTopicId.value = null;
+  topicDetailsError.value = '';
+  isTopicDetailsLoading.value = false;
   activeTab.value = tab;
+  if (tab === 'profile') {
+    ensureFavoriteTopicsLoaded();
+  }
+};
+
+const openTopicFromFavorites = async (topicId) => {
+  if (!topicId) return;
+  if (activeTab.value !== 'home') {
+    navigate('home');
+    await nextTick();
+  }
+  showTopic(topicId);
 };
 
 const showTopic = async (topicId) => {
-  if (!topics.value.some((topic) => topic.id === topicId)) {
-    return;
-  }
+  if (!topicId) return;
   topicDetailsError.value = '';
-  if (activeTab.value !== 'home') {
-    activeTab.value = 'home';
-  }
   if (activeTopicId.value !== topicId) {
     activeTopicId.value = topicId;
   }
@@ -480,7 +925,7 @@ const showTopicsList = () => {
 };
 
 const openStudyMode = (topicId, startIndex = 0) => {
-  const topic = topics.value.find((item) => item.id === topicId);
+  const topic = getTopicById(topicId);
   if (!topic || !topic.hasCardsLoaded || !Array.isArray(topic.cards) || !topic.cards.length) return;
   const boundedIndex = Math.min(Math.max(startIndex, 0), topic.cards.length - 1);
   studyState.isOpen = true;
@@ -537,6 +982,25 @@ const getCardWord = (count) => {
 };
 
 watch(
+  favoriteTopicIds,
+  () => {
+    if (sessionRemovedFavoriteTopicIds.value.length) {
+      sessionRemovedFavoriteTopicIds.value = sessionRemovedFavoriteTopicIds.value.filter(
+        (id) => !favoriteTopicsSet.value.has(id)
+      );
+    }
+    persistFavorites();
+    if (!favoriteTopicIds.value.length) {
+      favoritesError.value = '';
+      isFavoritesLoading.value = false;
+      return;
+    }
+    ensureFavoriteTopicsLoaded();
+  },
+  { deep: true }
+);
+
+watch(
   () => studyState.isOpen,
   (isOpen) => {
     document.body.classList.toggle('study-open', isOpen);
@@ -563,7 +1027,10 @@ watch(studyCard, (card) => {
 });
 
 onMounted(() => {
+  loadFavoritesFromStorage();
+  initTelegramIntegration();
   loadTopics(1);
+  ensureFavoriteTopicsLoaded();
 });
 
 onBeforeUnmount(() => {
