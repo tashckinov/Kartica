@@ -6,32 +6,6 @@
           <div class="profile-card">
             <h2>Профиль</h2>
             <div v-if="isProfileReady" class="profile-user" data-telegram-user>
-              <div class="profile-avatar" :data-has-photo="hasProfilePhoto ? 'true' : 'false'">
-                <img
-                  v-if="hasProfilePhoto"
-                  :src="userProfile.photoUrl"
-                  :alt="`Аватар пользователя ${profileDisplayName}`"
-                  loading="lazy"
-                />
-                <svg
-                  v-else
-                  class="profile-avatar-placeholder"
-                  viewBox="0 0 64 64"
-                  focusable="false"
-                  role="img"
-                  :aria-label="profileAvatarFallbackLabel"
-                >
-                  <circle cx="32" cy="32" r="30" fill="currentColor" opacity="0.12" />
-                  <circle cx="32" cy="26" r="12" fill="none" stroke="currentColor" stroke-width="2.4" />
-                  <path
-                    d="M18 52c0-8.84 6.82-16 14-16s14 7.16 14 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2.4"
-                    stroke-linecap="round"
-                  />
-                </svg>
-              </div>
               <div class="profile-user-info">
                 <span class="profile-user-name">{{ profileDisplayName }}</span>
                 <span v-if="showProfileUsername" class="profile-user-username">@{{ userProfile.username }}</span>
@@ -41,14 +15,6 @@
               </div>
             </div>
             <p v-else class="profile-placeholder">{{ profileFallbackText }}</p>
-          </div>
-          <div class="profile-card">
-            <h3>Советы</h3>
-            <ul>
-              <li>Повторяйте карточки каждый день.</li>
-              <li>Добавляйте свои темы, когда появится возможность.</li>
-              <li>Используйте приложение в Telegram mini app для синхронизации.</li>
-            </ul>
           </div>
           <div class="profile-card profile-favorites">
             <h3>Избранные темы</h3>
@@ -170,7 +136,7 @@
                 :disabled="isTopicDetailsLoading || !canStartStudy"
                 @click="openStudyMode(activeTopic.id, 0)"
               >
-                <span class="mode-title">Изучение</span>
+                <span class="mode-title">Просмотр</span>
                 <span class="mode-subtitle">Листайте карточки одну за другой</span>
               </button>
             </div>
@@ -183,7 +149,7 @@
             <div v-if="isTopicDetailsLoading" class="data-state" aria-live="polite">
               <div class="state-card">
                 <span class="state-title">Загружаем карточки…</span>
-                <span class="state-subtitle">Скоро можно будет начать изучение.</span>
+                <span class="state-subtitle">Скоро можно будет начать просмотр карточек.</span>
               </div>
             </div>
             <div v-else-if="topicDetailsError" class="data-state" aria-live="assertive">
@@ -305,7 +271,7 @@
         class="study-dialog"
         role="dialog"
         aria-modal="true"
-        :aria-label="`Изучение темы ${studyTopic.title}`"
+        :aria-label="`Просмотр темы ${studyTopic.title}`"
         tabindex="-1"
         @keydown.esc.prevent="closeStudyMode"
         @keydown.left.prevent="showPrevCard"
@@ -316,7 +282,7 @@
             <span class="study-topic">{{ studyTopic.title }}</span>
             <span class="study-progress">{{ studyProgress.current }} / {{ studyProgress.total }}</span>
           </div>
-          <button class="study-close" type="button" data-action="study-close" aria-label="Закрыть режим изучения" @click="closeStudyMode">
+          <button class="study-close" type="button" data-action="study-close" aria-label="Закрыть режим просмотра" @click="closeStudyMode">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
               <path d="m6 6 12 12" />
               <path d="m18 6-12 12" />
@@ -644,7 +610,6 @@ const userProfile = reactive({
   username: '',
   firstName: '',
   lastName: '',
-  photoUrl: '',
   languageCode: ''
 });
 const isTelegramEnvironment = ref(false);
@@ -654,7 +619,6 @@ const setUserProfile = (user = {}) => {
   userProfile.username = user.username ?? '';
   userProfile.firstName = user.first_name ?? user.firstName ?? '';
   userProfile.lastName = user.last_name ?? user.lastName ?? '';
-  userProfile.photoUrl = user.photo_url ?? user.photoUrl ?? '';
   userProfile.languageCode = user.language_code ?? user.languageCode ?? '';
 };
 
@@ -717,34 +681,6 @@ const profileDisplayName = computed(() => {
     return `@${userProfile.username}`;
   }
   return '';
-});
-
-const profileInitials = computed(() => {
-  if (profileNameParts.value.length) {
-    return profileNameParts.value
-      .map((part) => part.charAt(0))
-      .join('')
-      .slice(0, 2)
-      .toUpperCase();
-  }
-  if (userProfile.username) {
-    return userProfile.username.slice(0, 2).toUpperCase();
-  }
-  return 'TG';
-});
-
-const hasProfilePhoto = computed(
-  () => typeof userProfile.photoUrl === 'string' && userProfile.photoUrl.trim().length > 0
-);
-
-const profileAvatarFallbackLabel = computed(() => {
-  if (profileDisplayName.value) {
-    return `У пользователя ${profileDisplayName.value} пока нет аватарки`;
-  }
-  if (profileInitials.value) {
-    return `У пользователя с инициалами ${profileInitials.value} пока нет аватарки`;
-  }
-  return 'У пользователя пока нет аватарки';
 });
 
 const isProfileReady = computed(() => Boolean(profileDisplayName.value));

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kartica-cache-v2';
+const CACHE_NAME = 'kartica-cache-v3';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -24,7 +24,30 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return;
+  if (event.request.method !== 'GET') {
+    return;
+  }
+
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', clone));
+          return response;
+        })
+        .catch(() => caches.match('/index.html'))
+    );
+    return;
+  }
+
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.origin !== self.location.origin) {
+    return;
+  }
+
+  const shouldCache =
+    APP_SHELL.includes(requestUrl.pathname) || requestUrl.pathname.startsWith('/assets/');
 
   event.respondWith(
     caches.match(event.request).then((cached) => {
@@ -32,13 +55,13 @@ self.addEventListener('fetch', (event) => {
         return cached;
       }
 
-      return fetch(event.request)
-        .then((response) => {
+      return fetch(event.request).then((response) => {
+        if (shouldCache && response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          return response;
-        })
-        .catch(() => cached);
+        }
+        return response;
+      });
     })
   );
 });
