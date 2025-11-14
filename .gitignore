@@ -1,0 +1,8 @@
+node_modules
+/dist
+.vscode
+.idea
+.DS_Store
+
+api/prisma/dev.db
+api/prisma/dev.db-journal
