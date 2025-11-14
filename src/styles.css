@@ -983,11 +983,11 @@ body.memorize-open {
 }
 
 .memorize-option[data-state='correct'] {
-  border-color: color-mix(in srgb, var(--accent-color) 78%, var(--border-color));
+  border-color: rgba(34, 197, 94, 0.7);
   background:
-    linear-gradient(145deg, rgba(56, 189, 248, 0.28), rgba(56, 189, 248, 0.05)),
+    linear-gradient(145deg, rgba(34, 197, 94, 0.22), rgba(34, 197, 94, 0.04)),
     color-mix(in srgb, var(--surface-color) 94%, transparent);
-  box-shadow: 0 24px 46px -30px color-mix(in srgb, var(--accent-color) 48%, transparent);
+  box-shadow: 0 24px 46px -32px rgba(34, 197, 94, 0.55);
 }
 
 .memorize-option[data-state='incorrect'] {
@@ -1000,6 +1000,26 @@ body.memorize-open {
 .memorize-option:disabled {
   cursor: not-allowed;
   opacity: 0.92;
+}
+
+.memorize-actions {
+  margin-top: clamp(20px, 5vw, 28px);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.memorize-next {
+  min-width: 140px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.memorize-next:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
 }
 
 .memorize-resume,

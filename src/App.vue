@@ -373,6 +373,16 @@
               {{ option.text }}
             </button>
           </div>
+          <div class="memorize-actions">
+            <button
+              class="memorize-next memorize-action primary"
+              type="button"
+              :disabled="!canAdvanceMemorize"
+              @click="goToNextMemorizeStep"
+            >
+              Дальше
+            </button>
+          </div>
         </section>
       </div>
     </div>
@@ -509,7 +519,8 @@ const memorizeState = reactive({
   resumeSnapshot: null,
   totalAnswered: 0,
   selectedOptionId: null,
-  revealCorrectId: null
+  revealCorrectId: null,
+  pendingAnswerIsCorrect: null
 });
 
 const memorizeDialog = ref(null);
@@ -665,6 +676,13 @@ const memorizeProgressPercent = computed(() => {
     Math.round((memorizeProgress.value.learned / memorizeProgress.value.total) * 100)
   );
 });
+
+const canAdvanceMemorize = computed(
+  () =>
+    memorizeState.screen === 'quiz' &&
+    memorizeState.pendingAnswerIsCorrect !== null &&
+    Boolean(memorizeState.currentCardId)
+);
 
 const loadFavoritesFromStorage = () => {
   if (typeof window === 'undefined') return;
@@ -951,6 +969,7 @@ const resetMemorizeState = () => {
   memorizeState.totalAnswered = 0;
   memorizeState.selectedOptionId = null;
   memorizeState.revealCorrectId = null;
+  memorizeState.pendingAnswerIsCorrect = null;
 };
 
 const shuffleArray = (list) => {
@@ -1067,6 +1086,7 @@ const startMemorizeSession = (topicId, snapshot = null) => {
   memorizeState.isProcessingAnswer = false;
   memorizeState.selectedOptionId = null;
   memorizeState.revealCorrectId = null;
+  memorizeState.pendingAnswerIsCorrect = null;
   memorizeState.resumeSnapshot = null;
   updateMemorizeOptions();
   memorizeState.isOpen = true;
@@ -1110,6 +1130,7 @@ const openMemorizeMode = async (topicId) => {
     memorizeState.isProcessingAnswer = false;
     memorizeState.selectedOptionId = null;
     memorizeState.revealCorrectId = null;
+    memorizeState.pendingAnswerIsCorrect = null;
     memorizeState.isOpen = true;
     persistCurrentMemorizeState(true);
     return;
@@ -1125,6 +1146,7 @@ const openMemorizeMode = async (topicId) => {
     memorizeState.selectedOptionId = null;
     memorizeState.revealCorrectId = null;
     memorizeState.isProcessingAnswer = false;
+    memorizeState.pendingAnswerIsCorrect = null;
     memorizeState.resumeSnapshot = {
       queue: [...stored.queue],
       correctMap: { ...stored.correctMap },
@@ -1141,12 +1163,13 @@ const persistMemorizeAndResetSelection = () => {
   memorizeState.selectedOptionId = null;
   memorizeState.revealCorrectId = null;
   memorizeState.isProcessingAnswer = false;
+  memorizeState.pendingAnswerIsCorrect = null;
 };
 
 const applyMemorizeAnswer = (isCorrect) => {
   const currentId = memorizeState.currentCardId;
   const topic = memorizeTopic.value;
-  if (!currentId || !topic || !Array.isArray(topic.cards)) {
+  if (!currentId || !topic || !Array.isArray(topic.cards) || typeof isCorrect !== 'boolean') {
     persistMemorizeAndResetSelection();
     return;
   }
@@ -1187,18 +1210,18 @@ const selectMemorizeOption = (option) => {
   if (memorizeState.screen !== 'quiz' || memorizeState.isProcessingAnswer || !option) return;
   memorizeState.isProcessingAnswer = true;
   memorizeState.selectedOptionId = option.id;
+  memorizeState.pendingAnswerIsCorrect = Boolean(option.isCorrect);
   if (option.isCorrect) {
     memorizeState.revealCorrectId = option.id;
   } else {
     const correctOption = memorizeOptions.value.find((item) => item.isCorrect);
     memorizeState.revealCorrectId = correctOption ? correctOption.id : null;
   }
-  const delay = typeof window !== 'undefined' && typeof window.setTimeout === 'function'
-    ? window.setTimeout
-    : setTimeout;
-  delay(() => {
-    applyMemorizeAnswer(Boolean(option.isCorrect));
-  }, 260);
+};
+
+const goToNextMemorizeStep = () => {
+  if (!canAdvanceMemorize.value) return;
+  applyMemorizeAnswer(memorizeState.pendingAnswerIsCorrect);
 };
 
 const getMemorizeOptionState = (option) => {
