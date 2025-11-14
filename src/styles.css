@@ -38,6 +38,10 @@ body.study-open {
   overflow: hidden;
 }
 
+body.memorize-open {
+  overflow: hidden;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -788,6 +792,308 @@ body.study-open {
   padding: 32px 24px;
   text-align: center;
   color: var(--muted-text-color);
+}
+
+.memorize-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(16px, 4vw, 32px);
+  background:
+    radial-gradient(120% 120% at 50% 0%, rgba(56, 189, 248, 0.1), transparent),
+    color-mix(in srgb, var(--bg-color) 82%, transparent);
+  backdrop-filter: blur(18px);
+  z-index: 110;
+}
+
+.memorize-overlay[hidden] {
+  display: none !important;
+  pointer-events: none;
+}
+
+.memorize-dialog {
+  width: min(520px, 100%);
+  max-height: min(760px, 100%);
+  background:
+    linear-gradient(170deg, rgba(56, 189, 248, 0.16), rgba(7, 18, 40, 0.92)),
+    color-mix(in srgb, var(--surface-color) 96%, transparent);
+  border-radius: 26px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 24%, var(--border-color));
+  box-shadow: 0 46px 80px -42px color-mix(in srgb, var(--shadow-color) 85%, transparent);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.memorize-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 22px 24px 18px;
+  background: color-mix(in srgb, var(--surface-color) 92%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-color) 18%, var(--border-color));
+}
+
+.memorize-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memorize-topic {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.memorize-progress-label {
+  font-size: 13px;
+  color: var(--muted-text-color);
+}
+
+.memorize-close {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 28%, transparent);
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(56, 189, 248, 0)),
+    color-mix(in srgb, var(--surface-color) 88%, transparent);
+  color: inherit;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 18px 36px -26px color-mix(in srgb, var(--shadow-color) 80%, transparent);
+}
+
+.memorize-close svg {
+  width: 20px;
+  height: 20px;
+}
+
+.memorize-close:active {
+  transform: scale(0.94);
+}
+
+.memorize-progress {
+  padding: 0 24px 18px;
+}
+
+.memorize-progress-bar {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-color) 75%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 20%, var(--border-color));
+  overflow: hidden;
+}
+
+.memorize-progress-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.18), rgba(56, 189, 248, 0.78));
+  transition: width 0.3s ease;
+}
+
+.memorize-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(18px, 4vw, 26px);
+  padding: 0 clamp(22px, 5vw, 30px) clamp(28px, 6vw, 36px);
+}
+
+.memorize-card {
+  display: grid;
+  gap: 16px;
+  background: color-mix(in srgb, var(--surface-color) 94%, transparent);
+  border-radius: 22px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 18%, var(--border-color));
+  padding: clamp(20px, 5vw, 28px);
+  box-shadow: 0 30px 60px -38px color-mix(in srgb, var(--shadow-color) 78%, transparent);
+}
+
+.memorize-card-media {
+  width: 100%;
+  display: block;
+  overflow: hidden;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 18%, var(--border-color));
+}
+
+.memorize-card-media img {
+  display: block;
+  width: 100%;
+  height: clamp(160px, 32vw, 220px);
+  object-fit: cover;
+}
+
+.memorize-card-body {
+  display: grid;
+  gap: 10px;
+}
+
+.memorize-card-label {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-text-color);
+}
+
+.memorize-card-word {
+  font-size: clamp(24px, 7vw, 32px);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.memorize-card-example {
+  margin-top: 4px;
+  font-size: 14px;
+  color: var(--muted-text-color);
+  line-height: 1.6;
+}
+
+.memorize-options {
+  display: grid;
+  gap: clamp(12px, 4vw, 18px);
+}
+
+.memorize-option {
+  width: 100%;
+  padding: clamp(14px, 4vw, 18px) clamp(18px, 5vw, 24px);
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 20%, var(--border-color));
+  background:
+    linear-gradient(145deg, rgba(56, 189, 248, 0.12), rgba(56, 189, 248, 0)),
+    color-mix(in srgb, var(--surface-color) 92%, transparent);
+  color: var(--text-color);
+  font-size: clamp(15px, 4vw, 17px);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease,
+    background 0.2s ease;
+}
+
+.memorize-option:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent-color) 75%, transparent);
+  outline-offset: 3px;
+}
+
+.memorize-option[data-state='correct'] {
+  border-color: rgba(34, 197, 94, 0.7);
+  background:
+    linear-gradient(145deg, rgba(34, 197, 94, 0.22), rgba(34, 197, 94, 0.04)),
+    color-mix(in srgb, var(--surface-color) 94%, transparent);
+  box-shadow: 0 24px 46px -32px rgba(34, 197, 94, 0.55);
+}
+
+.memorize-option[data-state='incorrect'] {
+  border-color: rgba(244, 63, 94, 0.65);
+  background:
+    linear-gradient(145deg, rgba(244, 63, 94, 0.2), rgba(56, 189, 248, 0)),
+    color-mix(in srgb, var(--surface-color) 92%, transparent);
+}
+
+.memorize-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.92;
+}
+
+.memorize-actions {
+  margin-top: clamp(20px, 5vw, 28px);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.memorize-next {
+  min-width: 140px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.memorize-next:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+.memorize-resume,
+.memorize-complete {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: clamp(32px, 6vw, 40px);
+  text-align: center;
+}
+
+.memorize-complete-card {
+  max-width: 420px;
+  display: grid;
+  gap: 16px;
+  padding: clamp(26px, 6vw, 34px);
+  border-radius: 24px;
+  background:
+    linear-gradient(160deg, rgba(56, 189, 248, 0.24), rgba(15, 24, 50, 0.92)),
+    color-mix(in srgb, var(--surface-color) 94%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 40%, var(--border-color));
+  box-shadow: 0 36px 68px -38px color-mix(in srgb, var(--accent-color) 42%, transparent);
+}
+
+.memorize-resume-title,
+.memorize-complete-title {
+  margin: 0 0 12px;
+  font-size: clamp(22px, 6vw, 26px);
+}
+
+.memorize-resume-text,
+.memorize-complete-text {
+  margin: 0;
+  color: var(--muted-text-color);
+  font-size: clamp(14px, 3.6vw, 16px);
+  line-height: 1.6;
+}
+
+.memorize-resume-actions,
+.memorize-complete-actions {
+  margin-top: clamp(20px, 5vw, 28px);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+}
+
+.memorize-action {
+  padding: 12px 22px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 24%, var(--border-color));
+  background:
+    linear-gradient(145deg, rgba(56, 189, 248, 0.14), rgba(56, 189, 248, 0)),
+    color-mix(in srgb, var(--card-bg) 94%, transparent);
+  color: var(--text-color);
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.memorize-action.primary {
+  border-color: color-mix(in srgb, var(--accent-color) 65%, var(--border-color));
+  background:
+    linear-gradient(145deg, rgba(56, 189, 248, 0.28), rgba(56, 189, 248, 0.05)),
+    color-mix(in srgb, var(--card-bg) 94%, transparent);
+  box-shadow: 0 22px 44px -28px color-mix(in srgb, var(--accent-color) 46%, transparent);
+}
+
+.memorize-action:hover,
+.memorize-action:focus {
+  outline: none;
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent-color) 74%, var(--border-color));
 }
 
 .study-overlay {
