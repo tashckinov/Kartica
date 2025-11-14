@@ -33,28 +33,91 @@
               <li>Используйте приложение в Telegram mini app для синхронизации.</li>
             </ul>
           </div>
+          <div class="profile-card profile-favorites">
+            <h3>Избранные темы</h3>
+            <div v-if="isFavoritesLoading" class="profile-favorites-state" aria-live="polite">
+              <span class="profile-favorites-text">Загружаем избранное…</span>
+            </div>
+            <div v-else-if="favoritesError" class="profile-favorites-state" role="alert">
+              <span class="profile-favorites-text">{{ favoritesError }}</span>
+              <button class="profile-favorites-retry" type="button" @click="retryFavorites">
+                Попробовать снова
+              </button>
+            </div>
+            <div v-else-if="favoriteTopics.length" class="profile-favorites-grid">
+              <article
+                v-for="topic in favoriteTopics"
+                :key="topic.id"
+                class="topic-card profile-favorite-card"
+                role="button"
+                tabindex="0"
+                :data-topic-card="topic.id"
+                @click="openTopicFromFavorites(topic.id)"
+                @keydown.enter.prevent="openTopicFromFavorites(topic.id)"
+                @keydown.space.prevent="openTopicFromFavorites(topic.id)"
+              >
+                <button
+                  class="topic-card-favorite"
+                  type="button"
+                  :aria-pressed="isTopicFavorite(topic.id) ? 'true' : 'false'"
+                  :data-favorite="isTopicFavorite(topic.id) ? 'true' : 'false'"
+                  @click.stop="toggleFavorite(topic.id)"
+                >
+                  <span class="visually-hidden">
+                    {{ favoriteToggleText(topic.id) }}
+                  </span>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path
+                      :d="
+                        isTopicFavorite(topic.id)
+                          ? 'M12 4.5 14.89 9.8l5.61.82-4.05 3.95.95 5.55L12 16.98 6.6 20.12l.95-5.55L3.5 10.62l5.61-.82z'
+                          : 'm12 5.19 1.96 3.98 4.4.64-3.18 3.1.75 4.37L12 14.77l-3.93 2.51.75-4.37-3.18-3.1 4.4-.64z'
+                      "
+                      :fill="isTopicFavorite(topic.id) ? 'currentColor' : 'none'"
+                    />
+                  </svg>
+                </button>
+                <div class="topic-card-cover">
+                  <img v-if="topic.coverImage" :src="topic.coverImage" :alt="topic.title" loading="lazy" />
+                  <div v-else class="topic-card-placeholder" aria-hidden="true"></div>
+                  <span class="topic-card-badge">
+                    {{ getCardsCount(topic) }} {{ getCardWord(getCardsCount(topic)) }}
+                  </span>
+                </div>
+                <div class="topic-card-body">
+                  <h2 class="topic-card-title">{{ topic.title }}</h2>
+                  <p v-if="topic.subtitle" class="topic-card-subtitle">{{ topic.subtitle }}</p>
+                </div>
+              </article>
+            </div>
+            <p v-else class="profile-favorites-empty">
+              Добавьте группы в избранное, чтобы видеть их здесь.
+            </p>
+          </div>
         </div>
       </template>
       <template v-else>
         <section v-if="activeTopic" class="topic-detail" :data-topic-detail="activeTopic.id">
           <header class="topic-detail-header">
-            <button
-              class="back-button"
-              type="button"
-              data-action="back-to-topics"
-              aria-label="Вернуться к списку тем"
-              @click="showTopicsList"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="m15 6-6 6 6 6" />
-              </svg>
-            </button>
-            <div class="topic-detail-titles">
-              <span class="topic-detail-label">Тема</span>
-              <h1 class="topic-detail-title">{{ activeTopic.title }}</h1>
-              <p v-if="activeTopic.subtitle" class="topic-detail-subtitle">{{ activeTopic.subtitle }}</p>
-            </div>
-            <div class="topic-detail-actions">
+            <div class="topic-detail-top">
+              <button
+                class="back-button"
+                type="button"
+                data-action="back-to-topics"
+                aria-label="Вернуться к списку тем"
+                @click="showTopicsList"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m15 6-6 6 6 6" />
+                </svg>
+              </button>
               <button
                 class="favorite-toggle"
                 type="button"
@@ -77,12 +140,9 @@
                 </span>
               </button>
             </div>
+            <h1 class="topic-detail-title">{{ activeTopic.title }}</h1>
+            <p v-if="activeTopicDescription" class="topic-detail-description">{{ activeTopicDescription }}</p>
           </header>
-          <section class="topic-hero">
-            <img v-if="activeTopic.coverImage" :src="activeTopic.coverImage" :alt="activeTopic.title" loading="lazy" />
-            <div v-else class="topic-hero-placeholder">Добавьте обложку для темы</div>
-            <p v-if="activeTopic.description" class="topic-detail-description">{{ activeTopic.description }}</p>
-          </section>
           <section class="topic-modes">
             <h2 class="topic-modes-title">Режимы</h2>
             <div class="topic-modes-grid">
@@ -137,76 +197,6 @@
             </div>
           </section>
         </section>
-        <template v-else-if="activeTab === 'favorites'">
-          <header class="app-header">
-            <h1 class="app-title">Избранные темы</h1>
-            <p class="app-subtitle">Собирайте любимые группы карточек, чтобы возвращаться к ним быстрее.</p>
-          </header>
-          <section v-if="isFavoritesLoading" class="data-state" aria-live="polite">
-            <div class="state-card">
-              <span class="state-title">Загружаем избранное…</span>
-              <span class="state-subtitle">Секундочку, подготавливаем ваши темы.</span>
-            </div>
-          </section>
-          <section v-else-if="favoritesError" class="data-state" aria-live="assertive">
-            <div class="state-card">
-              <span class="state-title">Не удалось загрузить избранные темы</span>
-              <p class="state-subtitle">{{ favoritesError }}</p>
-              <button class="state-action" type="button" @click="retryFavorites">Попробовать снова</button>
-            </div>
-          </section>
-          <template v-else>
-            <section v-if="favoriteTopics.length" class="topics-grid">
-              <article
-                v-for="topic in favoriteTopics"
-                :key="topic.id"
-                class="topic-card"
-                role="button"
-                tabindex="0"
-                :data-topic-card="topic.id"
-                @click="showTopic(topic.id)"
-                @keydown.enter.prevent="showTopic(topic.id)"
-                @keydown.space.prevent="showTopic(topic.id)"
-              >
-                <button
-                  class="topic-card-favorite"
-                  type="button"
-                  :aria-pressed="isTopicFavorite(topic.id) ? 'true' : 'false'"
-                  :data-favorite="isTopicFavorite(topic.id) ? 'true' : 'false'"
-                  @click.stop="toggleFavorite(topic.id)"
-                >
-                  <span class="visually-hidden">
-                    {{ favoriteToggleText(topic.id) }}
-                  </span>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path
-                      :d="
-                        isTopicFavorite(topic.id)
-                          ? 'M12 4.5 14.89 9.8l5.61.82-4.05 3.95.95 5.55L12 16.98 6.6 20.12l.95-5.55L3.5 10.62l5.61-.82z'
-                          : 'm12 5.19 1.96 3.98 4.4.64-3.18 3.1.75 4.37L12 14.77l-3.93 2.51.75-4.37-3.18-3.1 4.4-.64z'
-                      "
-                      :fill="isTopicFavorite(topic.id) ? 'currentColor' : 'none'"
-                    />
-                  </svg>
-                </button>
-                <div class="topic-card-cover">
-                  <img v-if="topic.coverImage" :src="topic.coverImage" :alt="topic.title" loading="lazy" />
-                  <div v-else class="topic-card-placeholder" aria-hidden="true"></div>
-                  <span class="topic-card-badge">
-                    {{ getCardsCount(topic) }} {{ getCardWord(getCardsCount(topic)) }}
-                  </span>
-                </div>
-                <div class="topic-card-body">
-                  <h2 class="topic-card-title">{{ topic.title }}</h2>
-                  <p v-if="topic.subtitle" class="topic-card-subtitle">{{ topic.subtitle }}</p>
-                </div>
-              </article>
-            </section>
-            <div v-else class="empty-state">
-              Добавьте группы в избранное, чтобы видеть их здесь.
-            </div>
-          </template>
-        </template>
         <template v-else>
           <header class="app-header">
             <h1 class="app-title">Изучаем языки с карточками</h1>
@@ -238,27 +228,6 @@
                 @keydown.enter.prevent="showTopic(topic.id)"
                 @keydown.space.prevent="showTopic(topic.id)"
               >
-                <button
-                  class="topic-card-favorite"
-                  type="button"
-                  :aria-pressed="isTopicFavorite(topic.id) ? 'true' : 'false'"
-                  :data-favorite="isTopicFavorite(topic.id) ? 'true' : 'false'"
-                  @click.stop="toggleFavorite(topic.id)"
-                >
-                  <span class="visually-hidden">
-                    {{ favoriteToggleText(topic.id) }}
-                  </span>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path
-                      :d="
-                        isTopicFavorite(topic.id)
-                          ? 'M12 4.5 14.89 9.8l5.61.82-4.05 3.95.95 5.55L12 16.98 6.6 20.12l.95-5.55L3.5 10.62l5.61-.82z'
-                          : 'm12 5.19 1.96 3.98 4.4.64-3.18 3.1.75 4.37L12 14.77l-3.93 2.51.75-4.37-3.18-3.1 4.4-.64z'
-                      "
-                      :fill="isTopicFavorite(topic.id) ? 'currentColor' : 'none'"
-                    />
-                  </svg>
-                </button>
                 <div class="topic-card-cover">
                   <img v-if="topic.coverImage" :src="topic.coverImage" :alt="topic.title" loading="lazy" />
                   <div v-else class="topic-card-placeholder" aria-hidden="true"></div>
@@ -468,6 +437,11 @@ const upsertTopic = (partialTopic = {}) => {
 };
 
 const activeTopic = computed(() => getTopicById(activeTopicId.value));
+const activeTopicDescription = computed(() => {
+  const topic = activeTopic.value;
+  if (!topic) return '';
+  return topic.description || topic.subtitle || '';
+});
 const studyTopic = computed(() => getTopicById(studyState.topicId));
 const currentTopics = computed(() =>
   currentPageTopicIds.value
@@ -854,9 +828,18 @@ const navigate = (tab) => {
   topicDetailsError.value = '';
   isTopicDetailsLoading.value = false;
   activeTab.value = tab;
-  if (tab === 'favorites') {
+  if (tab === 'profile') {
     ensureFavoriteTopicsLoaded();
   }
+};
+
+const openTopicFromFavorites = async (topicId) => {
+  if (!topicId) return;
+  if (activeTab.value !== 'home') {
+    navigate('home');
+    await nextTick();
+  }
+  showTopic(topicId);
 };
 
 const showTopic = async (topicId) => {
