@@ -21,6 +21,7 @@ model Card {
   term       String
   definition String
   example    String?
+  image      String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   groupId    Int

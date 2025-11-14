@@ -815,7 +815,7 @@ const ensureFavoriteTopicsLoaded = async () => {
           id: card.id,
           translation: card.definition,
           original: card.term,
-          image: null,
+          image: card.image || null,
           example: card.example || ''
         }));
         upsertTopic({
@@ -1408,7 +1408,7 @@ const ensureTopicDetails = async (topicId) => {
       id: card.id,
       translation: card.definition,
       original: card.term,
-      image: null,
+      image: card.image || null,
       example: card.example || ''
     }));
     const updatedTopic = upsertTopic({

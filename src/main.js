@@ -1,11 +1,14 @@
 import { createApp } from 'vue';
 import App from './App.vue';
+import AdminApp from './AdminApp.vue';
 import './styles.css';
 import { initializeTheme } from './theme.js';
 
 initializeTheme();
 
-const app = createApp(App);
+const isAdminRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin');
+
+const app = createApp(isAdminRoute ? AdminApp : App);
 app.mount('#app');
 
 if ('serviceWorker' in navigator) {
