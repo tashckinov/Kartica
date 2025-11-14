@@ -732,6 +732,12 @@ body.study-open {
   object-fit: cover;
 }
 
+.profile-avatar-placeholder {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 .profile-user-info {
   display: grid;
   gap: 4px;

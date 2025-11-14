@@ -6,14 +6,31 @@
           <div class="profile-card">
             <h2>Профиль</h2>
             <div v-if="isProfileReady" class="profile-user" data-telegram-user>
-              <div class="profile-avatar" :data-has-photo="userProfile.photoUrl ? 'true' : 'false'">
+              <div class="profile-avatar" :data-has-photo="hasProfilePhoto ? 'true' : 'false'">
                 <img
-                  v-if="userProfile.photoUrl"
+                  v-if="hasProfilePhoto"
                   :src="userProfile.photoUrl"
                   :alt="`Аватар пользователя ${profileDisplayName}`"
                   loading="lazy"
                 />
-                <span v-else aria-hidden="true">{{ profileInitials }}</span>
+                <svg
+                  v-else
+                  class="profile-avatar-placeholder"
+                  viewBox="0 0 64 64"
+                  focusable="false"
+                  role="img"
+                  :aria-label="profileAvatarFallbackLabel"
+                >
+                  <circle cx="32" cy="32" r="30" fill="currentColor" opacity="0.12" />
+                  <circle cx="32" cy="26" r="12" fill="none" stroke="currentColor" stroke-width="2.4" />
+                  <path
+                    d="M18 52c0-8.84 6.82-16 14-16s14 7.16 14 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                  />
+                </svg>
               </div>
               <div class="profile-user-info">
                 <span class="profile-user-name">{{ profileDisplayName }}</span>
@@ -714,6 +731,20 @@ const profileInitials = computed(() => {
     return userProfile.username.slice(0, 2).toUpperCase();
   }
   return 'TG';
+});
+
+const hasProfilePhoto = computed(
+  () => typeof userProfile.photoUrl === 'string' && userProfile.photoUrl.trim().length > 0
+);
+
+const profileAvatarFallbackLabel = computed(() => {
+  if (profileDisplayName.value) {
+    return `У пользователя ${profileDisplayName.value} пока нет аватарки`;
+  }
+  if (profileInitials.value) {
+    return `У пользователя с инициалами ${profileInitials.value} пока нет аватарки`;
+  }
+  return 'У пользователя пока нет аватарки';
 });
 
 const isProfileReady = computed(() => Boolean(profileDisplayName.value));
