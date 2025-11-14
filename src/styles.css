@@ -114,6 +114,103 @@ body.study-open {
   padding: clamp(20px, 6vw, 36px) clamp(16px, 6vw, 28px) clamp(28px, 7vw, 40px);
 }
 
+.data-state {
+  padding: clamp(28px, 8vw, 40px) clamp(16px, 6vw, 28px);
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.state-card {
+  display: grid;
+  gap: 12px;
+  padding: clamp(22px, 7vw, 30px);
+  border-radius: 20px;
+  background:
+    linear-gradient(150deg, rgba(56, 189, 248, 0.16), rgba(17, 34, 66, 0.7)),
+    color-mix(in srgb, var(--surface-color) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 26%, var(--border-color));
+  box-shadow: 0 26px 48px -28px var(--shadow-color);
+  max-width: 420px;
+}
+
+.state-title {
+  font-size: clamp(16px, 4.5vw, 18px);
+  font-weight: 600;
+}
+
+.state-subtitle {
+  margin: 0;
+  color: var(--muted-text-color);
+  font-size: clamp(13px, 3.6vw, 15px);
+  line-height: 1.6;
+}
+
+.state-action {
+  justify-self: center;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 30%, var(--border-color));
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.18), rgba(56, 189, 248, 0)),
+    color-mix(in srgb, var(--card-bg) 95%, transparent);
+  color: var(--text-color);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.state-action:hover,
+.state-action:focus {
+  outline: none;
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent-color) 65%, var(--border-color));
+  box-shadow: 0 18px 30px -24px var(--shadow-color);
+}
+
+.topics-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(12px, 4vw, 24px);
+  padding: 0 clamp(16px, 6vw, 28px) clamp(28px, 7vw, 40px);
+}
+
+.pagination-button {
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 28%, var(--border-color));
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.18), rgba(56, 189, 248, 0)),
+    color-mix(in srgb, var(--card-bg) 94%, transparent);
+  color: var(--text-color);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.pagination-button:focus,
+.pagination-button:hover {
+  outline: none;
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent-color) 70%, var(--border-color));
+  box-shadow: 0 16px 30px -24px var(--shadow-color);
+}
+
+.pagination-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.pagination-status {
+  font-size: 14px;
+  color: var(--muted-text-color);
+}
+
 .topic-card {
   position: relative;
   display: grid;
@@ -365,6 +462,13 @@ body.study-open {
   box-shadow: 0 26px 40px -26px color-mix(in srgb, var(--shadow-color) 88%, transparent);
 }
 
+.mode-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
 .mode-title {
   font-size: clamp(14px, 4vw, 16px);
   font-weight: 600;
@@ -463,6 +567,12 @@ body.study-open {
 .flashcard-original {
   font-size: 15px;
   color: var(--secondary-text-color);
+}
+
+.flashcard-example {
+  font-size: 13px;
+  color: var(--muted-text-color);
+  line-height: 1.5;
 }
 
 .flashcard-topic {
@@ -740,13 +850,18 @@ body.study-open {
 }
 
 .study-face-helper,
-.study-face-hint {
+.study-face-hint,
+.study-face-example {
   font-size: 14px;
   color: var(--muted-text-color);
 }
 
 .study-face-hint {
   max-width: 220px;
+}
+
+.study-face-example {
+  line-height: 1.6;
 }
 
 .study-back-media {

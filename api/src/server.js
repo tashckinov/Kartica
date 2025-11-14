@@ -13,6 +13,7 @@ function parsePagination(query) {
 }
 
 app.get('/groups', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
   try {
     const { page, pageSize, skip } = parsePagination(req.query);
 
@@ -49,6 +50,7 @@ app.get('/groups', async (req, res) => {
 });
 
 app.get('/groups/:id', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
@@ -76,6 +78,7 @@ app.get('/groups/:id', async (req, res) => {
 });
 
 app.get('/cards', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
   try {
     const { page, pageSize, skip } = parsePagination(req.query);
 
@@ -109,6 +112,7 @@ app.get('/cards', async (req, res) => {
 });
 
 app.get('/cards/:id', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
@@ -136,6 +140,7 @@ app.get('/cards/:id', async (req, res) => {
 });
 
 app.use((req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.status(404).json({ error: 'Not found' });
 });
 
