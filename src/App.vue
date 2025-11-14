@@ -170,7 +170,7 @@
                 :disabled="isTopicDetailsLoading || !canStartStudy"
                 @click="openStudyMode(activeTopic.id, 0)"
               >
-                <span class="mode-title">Изучение</span>
+                <span class="mode-title">Просмотр</span>
                 <span class="mode-subtitle">Листайте карточки одну за другой</span>
               </button>
             </div>
@@ -183,7 +183,7 @@
             <div v-if="isTopicDetailsLoading" class="data-state" aria-live="polite">
               <div class="state-card">
                 <span class="state-title">Загружаем карточки…</span>
-                <span class="state-subtitle">Скоро можно будет начать изучение.</span>
+                <span class="state-subtitle">Скоро можно будет начать просмотр карточек.</span>
               </div>
             </div>
             <div v-else-if="topicDetailsError" class="data-state" aria-live="assertive">
@@ -305,7 +305,7 @@
         class="study-dialog"
         role="dialog"
         aria-modal="true"
-        :aria-label="`Изучение темы ${studyTopic.title}`"
+        :aria-label="`Просмотр темы ${studyTopic.title}`"
         tabindex="-1"
         @keydown.esc.prevent="closeStudyMode"
         @keydown.left.prevent="showPrevCard"
@@ -316,7 +316,7 @@
             <span class="study-topic">{{ studyTopic.title }}</span>
             <span class="study-progress">{{ studyProgress.current }} / {{ studyProgress.total }}</span>
           </div>
-          <button class="study-close" type="button" data-action="study-close" aria-label="Закрыть режим изучения" @click="closeStudyMode">
+          <button class="study-close" type="button" data-action="study-close" aria-label="Закрыть режим просмотра" @click="closeStudyMode">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
               <path d="m6 6 12 12" />
               <path d="m18 6-12 12" />
