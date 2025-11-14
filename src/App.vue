@@ -44,9 +44,9 @@
                 Попробовать снова
               </button>
             </div>
-            <div v-else-if="favoriteTopics.length" class="profile-favorites-grid">
+            <div v-else-if="profileFavoriteTopics.length" class="profile-favorites-grid">
               <article
-                v-for="topic in favoriteTopics"
+                v-for="topic in profileFavoriteTopics"
                 :key="topic.id"
                 class="topic-card profile-favorite-card"
                 role="button"
@@ -61,7 +61,7 @@
                   type="button"
                   :aria-pressed="isTopicFavorite(topic.id) ? 'true' : 'false'"
                   :data-favorite="isTopicFavorite(topic.id) ? 'true' : 'false'"
-                  @click.stop="toggleFavorite(topic.id)"
+                  @click.stop="toggleFavorite(topic.id, { preserveCard: true })"
                 >
                   <span class="visually-hidden">
                     {{ favoriteToggleText(topic.id) }}
@@ -381,6 +381,7 @@ const activeTopicId = ref(null);
 
 const favoriteStorageKey = 'kartica:favorites';
 const favoriteTopicIds = ref([]);
+const sessionRemovedFavoriteTopicIds = ref([]);
 const isFavoritesLoading = ref(false);
 const favoritesError = ref('');
 
@@ -455,6 +456,12 @@ const favoriteTopics = computed(() =>
     .map((topicId) => getTopicById(topicId))
     .filter((topic) => topic !== null)
 );
+const profileFavoriteTopics = computed(() => {
+  const visibleRemovedTopics = sessionRemovedFavoriteTopicIds.value
+    .map((topicId) => getTopicById(topicId))
+    .filter((topic) => topic !== null && !favoriteTopicsSet.value.has(topic.id));
+  return [...favoriteTopics.value, ...visibleRemovedTopics];
+});
 const isTopicFavorite = (topicId) => favoriteTopicsSet.value.has(topicId);
 const isActiveTopicFavorite = computed(() => {
   const topic = activeTopic.value;
@@ -576,13 +583,36 @@ const retryFavorites = () => {
   ensureFavoriteTopicsLoaded();
 };
 
-const toggleFavorite = async (topicId) => {
+const removeSessionFavorite = (topicId) => {
+  if (!sessionRemovedFavoriteTopicIds.value.length) return;
+  sessionRemovedFavoriteTopicIds.value = sessionRemovedFavoriteTopicIds.value.filter(
+    (id) => id !== topicId
+  );
+};
+
+const rememberSessionFavorite = (topicId) => {
+  if (!sessionRemovedFavoriteTopicIds.value.includes(topicId)) {
+    sessionRemovedFavoriteTopicIds.value = [
+      ...sessionRemovedFavoriteTopicIds.value,
+      topicId
+    ];
+  }
+};
+
+const toggleFavorite = async (topicId, options = {}) => {
   if (!topicId) return;
+  const preserveCard = Boolean(options.preserveCard);
   if (isTopicFavorite(topicId)) {
     favoriteTopicIds.value = favoriteTopicIds.value.filter((id) => id !== topicId);
+    if (preserveCard) {
+      rememberSessionFavorite(topicId);
+    } else {
+      removeSessionFavorite(topicId);
+    }
     return;
   }
   favoriteTopicIds.value = [...favoriteTopicIds.value, topicId];
+  removeSessionFavorite(topicId);
   if (!getTopicById(topicId)) {
     try {
       await ensureTopicDetails(topicId);
@@ -923,6 +953,11 @@ const getCardWord = (count) => {
 watch(
   favoriteTopicIds,
   () => {
+    if (sessionRemovedFavoriteTopicIds.value.length) {
+      sessionRemovedFavoriteTopicIds.value = sessionRemovedFavoriteTopicIds.value.filter(
+        (id) => !favoriteTopicsSet.value.has(id)
+      );
+    }
     persistFavorites();
     if (!favoriteTopicIds.value.length) {
       favoritesError.value = '';
