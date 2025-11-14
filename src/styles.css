@@ -34,6 +34,14 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+body.admin-route {
+  background: #f3f4f6;
+  background-color: #f3f4f6;
+  color: #111827;
+  justify-content: flex-start;
+  align-items: stretch;
+}
+
 body.study-open {
   overflow: hidden;
 }
@@ -64,6 +72,17 @@ body.memorize-open {
   box-shadow: 0 32px 68px -36px var(--shadow-color);
   border: 1px solid rgba(56, 189, 248, 0.08);
   backdrop-filter: blur(10px);
+}
+
+body.admin-route #app {
+  width: 100%;
+  min-height: 100dvh;
+  height: auto;
+  max-width: none;
+  background: transparent;
+  box-shadow: none;
+  border: none;
+  backdrop-filter: none;
 }
 
 .app-shell {

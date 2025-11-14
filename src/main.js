@@ -8,6 +8,10 @@ initializeTheme();
 
 const isAdminRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin');
 
+if (typeof document !== 'undefined') {
+  document.body.classList.toggle('admin-route', isAdminRoute);
+}
+
 const app = createApp(isAdminRoute ? AdminApp : App);
 app.mount('#app');
 
