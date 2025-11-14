@@ -301,7 +301,7 @@
           <div class="memorize-header-text">
             <span class="memorize-topic">{{ memorizeTopic.title }}</span>
             <span class="memorize-progress-label">
-              {{ memorizeProgress.learned }} из {{ memorizeProgress.total }} выучено
+              Выучено: {{ memorizeProgress.learned }} из {{ memorizeProgress.total }}
             </span>
           </div>
         </header>
@@ -310,8 +310,9 @@
           role="progressbar"
           aria-live="polite"
           :aria-valuemin="0"
-          :aria-valuemax="memorizeProgress.total"
-          :aria-valuenow="memorizeProgress.learned"
+          :aria-valuemax="memorizeProgress.requiredUnits"
+          :aria-valuenow="memorizeProgress.completedUnits"
+          :aria-valuetext="`${memorizeProgressPercent}% завершено`"
         >
           <div class="memorize-progress-bar">
             <div class="memorize-progress-bar-fill" :style="{ width: `${memorizeProgressPercent}%` }"></div>
@@ -335,7 +336,7 @@
           <div class="memorize-complete-card">
             <h2 class="memorize-complete-title">Отлично! Все слова выучены</h2>
             <p class="memorize-complete-text">
-              Вы выбрали правильный перевод для каждого слова три раза.
+              Вы выбрали правильный перевод для каждого слова столько раз, сколько нужно для зачёта.
             </p>
             <div class="memorize-complete-actions">
               <button class="memorize-action primary" type="button" @click="restartMemorizeProgress">
@@ -504,7 +505,8 @@ const studyState = reactive({
 
 const studyDialog = ref(null);
 
-const MEMORIZE_REQUIRED_SUCCESS = 3;
+const MEMORIZE_BASE_REQUIRED_SUCCESS = 3;
+const MEMORIZE_FAST_TRACK_SUCCESS = 2;
 const memorizeStoragePrefix = 'kartica:memorize:';
 
 const memorizeState = reactive({
@@ -512,6 +514,7 @@ const memorizeState = reactive({
   topicId: null,
   queue: [],
   correctMap: {},
+  firstAttemptMap: {},
   currentCardId: null,
   options: [],
   isProcessingAnswer: false,
@@ -524,6 +527,13 @@ const memorizeState = reactive({
 });
 
 const memorizeDialog = ref(null);
+
+const resolveMemorizeRequiredSuccess = (cardId, firstAttemptMap = memorizeState.firstAttemptMap) => {
+  if (!cardId) return MEMORIZE_BASE_REQUIRED_SUCCESS;
+  return firstAttemptMap?.[cardId] === true
+    ? MEMORIZE_FAST_TRACK_SUCCESS
+    : MEMORIZE_BASE_REQUIRED_SUCCESS;
+};
 
 const getTopicById = (topicId) => {
   if (!topicId) return null;
@@ -659,21 +669,34 @@ const memorizeOptions = computed(() => memorizeState.options || []);
 const memorizeProgress = computed(() => {
   const topic = memorizeTopic.value;
   const cards = Array.isArray(topic?.cards) ? topic.cards : [];
-  const learned = cards.filter((card) => {
+  let learned = 0;
+  let completedUnits = 0;
+  let requiredUnits = 0;
+  cards.forEach((card) => {
+    const requiredSuccess = resolveMemorizeRequiredSuccess(card.id);
     const score = memorizeState.correctMap?.[card.id] ?? 0;
-    return score >= MEMORIZE_REQUIRED_SUCCESS;
-  }).length;
+    const clampedScore = Math.min(requiredSuccess, Math.max(0, score));
+    if (clampedScore >= requiredSuccess) {
+      learned += 1;
+    }
+    completedUnits += clampedScore;
+    requiredUnits += requiredSuccess;
+  });
   return {
     learned,
-    total: cards.length
+    total: cards.length,
+    completedUnits,
+    requiredUnits
   };
 });
 
 const memorizeProgressPercent = computed(() => {
-  if (!memorizeProgress.value.total) return 0;
+  if (!memorizeProgress.value.requiredUnits) return 0;
   return Math.min(
     100,
-    Math.round((memorizeProgress.value.learned / memorizeProgress.value.total) * 100)
+    Math.round(
+      (memorizeProgress.value.completedUnits / memorizeProgress.value.requiredUnits) * 100
+    )
   );
 });
 
@@ -721,9 +744,13 @@ const loadMemorizeProgress = (topicId) => {
     }
     const queue = Array.isArray(parsed.queue) ? parsed.queue : [];
     const correctMap = parsed.correctMap && typeof parsed.correctMap === 'object' ? parsed.correctMap : {};
+    const firstAttemptMap =
+      parsed.firstAttemptMap && typeof parsed.firstAttemptMap === 'object'
+        ? parsed.firstAttemptMap
+        : {};
     const totalAnswered = Number.isFinite(parsed.totalAnswered) ? parsed.totalAnswered : 0;
     const isComplete = Boolean(parsed.isComplete);
-    return { queue, correctMap, totalAnswered, isComplete };
+    return { queue, correctMap, firstAttemptMap, totalAnswered, isComplete };
   } catch (error) {
     console.warn('Не удалось загрузить прогресс заучивания', error);
     return null;
@@ -735,7 +762,16 @@ const persistMemorizeProgress = (topicId, payload) => {
   try {
     const data = {
       queue: Array.isArray(payload?.queue) ? payload.queue : [],
-      correctMap: payload?.correctMap && typeof payload.correctMap === 'object' ? payload.correctMap : {},
+      correctMap:
+        payload?.correctMap && typeof payload.correctMap === 'object'
+          ? { ...payload.correctMap }
+          : {},
+      firstAttemptMap:
+        payload?.firstAttemptMap && typeof payload.firstAttemptMap === 'object'
+          ? Object.fromEntries(
+              Object.entries(payload.firstAttemptMap).map(([key, value]) => [key, value === true])
+            )
+          : {},
       totalAnswered: Number.isFinite(payload?.totalAnswered) ? payload.totalAnswered : 0,
       isComplete: Boolean(payload?.isComplete)
     };
@@ -961,6 +997,7 @@ const resetMemorizeState = () => {
   memorizeState.topicId = null;
   memorizeState.queue = [];
   memorizeState.correctMap = {};
+  memorizeState.firstAttemptMap = {};
   memorizeState.currentCardId = null;
   memorizeState.options = [];
   memorizeState.isProcessingAnswer = false;
@@ -981,15 +1018,26 @@ const shuffleArray = (list) => {
   return array;
 };
 
-const normalizeMemorizeCorrectMap = (cards, storedMap = {}) => {
+const normalizeMemorizeFirstAttemptMap = (cards, storedMap = {}) => {
+  const map = {};
+  const availableIds = new Set(cards.map((card) => card.id));
+  if (storedMap && typeof storedMap === 'object') {
+    Object.entries(storedMap).forEach(([cardId, value]) => {
+      if (availableIds.has(cardId)) {
+        map[cardId] = value === true;
+      }
+    });
+  }
+  return map;
+};
+
+const normalizeMemorizeCorrectMap = (cards, storedMap = {}, firstAttemptMap = {}) => {
   const map = {};
   cards.forEach((card) => {
     const raw = Number(storedMap?.[card.id]);
     if (Number.isFinite(raw) && raw > 0) {
-      map[card.id] = Math.min(
-        MEMORIZE_REQUIRED_SUCCESS,
-        Math.max(0, Math.floor(raw))
-      );
+      const required = resolveMemorizeRequiredSuccess(card.id, firstAttemptMap);
+      map[card.id] = Math.min(required, Math.max(0, Math.floor(raw)));
     } else {
       map[card.id] = 0;
     }
@@ -997,17 +1045,21 @@ const normalizeMemorizeCorrectMap = (cards, storedMap = {}) => {
   return map;
 };
 
-const buildMemorizeQueue = (cards, correctMap, storedQueue = []) => {
+const buildMemorizeQueue = (cards, correctMap, firstAttemptMap, storedQueue = []) => {
   const availableIds = new Set(cards.map((card) => card.id));
   let queue = Array.isArray(storedQueue)
     ? storedQueue.filter(
         (cardId) =>
-          availableIds.has(cardId) && (correctMap[cardId] ?? 0) < MEMORIZE_REQUIRED_SUCCESS
+          availableIds.has(cardId) &&
+          (correctMap[cardId] ?? 0) < resolveMemorizeRequiredSuccess(cardId, firstAttemptMap)
       )
     : [];
   if (!queue.length) {
     queue = cards
-      .filter((card) => (correctMap[card.id] ?? 0) < MEMORIZE_REQUIRED_SUCCESS)
+      .filter(
+        (card) =>
+          (correctMap[card.id] ?? 0) < resolveMemorizeRequiredSuccess(card.id, firstAttemptMap)
+      )
       .map((card) => card.id);
     queue = shuffleArray(queue);
   }
@@ -1053,6 +1105,7 @@ const persistCurrentMemorizeState = (isCompleteOverride = null) => {
   persistMemorizeProgress(memorizeState.topicId, {
     queue: memorizeState.queue,
     correctMap: memorizeState.correctMap,
+    firstAttemptMap: memorizeState.firstAttemptMap,
     totalAnswered: memorizeState.totalAnswered,
     isComplete: shouldMarkComplete
   });
@@ -1073,10 +1126,12 @@ const startMemorizeSession = (topicId, snapshot = null) => {
   if (!topic || !topic.hasCardsLoaded || !Array.isArray(topic.cards) || !topic.cards.length) {
     return;
   }
-  const correctMap = normalizeMemorizeCorrectMap(topic.cards, snapshot?.correctMap);
-  const queue = buildMemorizeQueue(topic.cards, correctMap, snapshot?.queue);
+  const firstAttemptMap = normalizeMemorizeFirstAttemptMap(topic.cards, snapshot?.firstAttemptMap);
+  const correctMap = normalizeMemorizeCorrectMap(topic.cards, snapshot?.correctMap, firstAttemptMap);
+  const queue = buildMemorizeQueue(topic.cards, correctMap, firstAttemptMap, snapshot?.queue);
   memorizeState.topicId = topicId;
   memorizeState.correctMap = correctMap;
+  memorizeState.firstAttemptMap = firstAttemptMap;
   memorizeState.queue = queue;
   memorizeState.totalAnswered = Number.isFinite(snapshot?.totalAnswered)
     ? snapshot.totalAnswered
@@ -1119,8 +1174,18 @@ const openMemorizeMode = async (topicId) => {
   resetStudyState();
   const stored = loadMemorizeProgress(topicId);
   if (stored && stored.isComplete && (!stored.queue || !stored.queue.length)) {
+    const firstAttemptMap = normalizeMemorizeFirstAttemptMap(
+      readyTopic.cards,
+      stored.firstAttemptMap || {}
+    );
+    const correctMap = normalizeMemorizeCorrectMap(
+      readyTopic.cards,
+      stored.correctMap || {},
+      firstAttemptMap
+    );
     memorizeState.topicId = topicId;
-    memorizeState.correctMap = normalizeMemorizeCorrectMap(readyTopic.cards, stored.correctMap || {});
+    memorizeState.correctMap = correctMap;
+    memorizeState.firstAttemptMap = firstAttemptMap;
     memorizeState.queue = [];
     memorizeState.totalAnswered = Number.isFinite(stored.totalAnswered) ? stored.totalAnswered : 0;
     memorizeState.screen = 'complete';
@@ -1136,8 +1201,18 @@ const openMemorizeMode = async (topicId) => {
     return;
   }
   if (stored && Array.isArray(stored.queue) && stored.queue.length) {
+    const firstAttemptMap = normalizeMemorizeFirstAttemptMap(
+      readyTopic.cards,
+      stored.firstAttemptMap || {}
+    );
+    const correctMap = normalizeMemorizeCorrectMap(
+      readyTopic.cards,
+      stored.correctMap || {},
+      firstAttemptMap
+    );
     memorizeState.topicId = topicId;
-    memorizeState.correctMap = normalizeMemorizeCorrectMap(readyTopic.cards, stored.correctMap || {});
+    memorizeState.correctMap = correctMap;
+    memorizeState.firstAttemptMap = firstAttemptMap;
     memorizeState.queue = [...stored.queue];
     memorizeState.totalAnswered = Number.isFinite(stored.totalAnswered) ? stored.totalAnswered : 0;
     memorizeState.screen = 'prompt';
@@ -1148,9 +1223,10 @@ const openMemorizeMode = async (topicId) => {
     memorizeState.isProcessingAnswer = false;
     memorizeState.pendingAnswerIsCorrect = null;
     memorizeState.resumeSnapshot = {
-      queue: [...stored.queue],
-      correctMap: { ...stored.correctMap },
-      totalAnswered: stored.totalAnswered,
+      queue: [...memorizeState.queue],
+      correctMap: { ...memorizeState.correctMap },
+      firstAttemptMap: { ...memorizeState.firstAttemptMap },
+      totalAnswered: memorizeState.totalAnswered,
       isComplete: Boolean(stored.isComplete)
     };
     memorizeState.isOpen = true;
@@ -1175,16 +1251,25 @@ const applyMemorizeAnswer = (isCorrect) => {
   }
   const queue = Array.isArray(memorizeState.queue) ? [...memorizeState.queue] : [];
   queue.shift();
+  const firstAttemptMap = memorizeState.firstAttemptMap || {};
+  if (!Object.prototype.hasOwnProperty.call(firstAttemptMap, currentId)) {
+    memorizeState.firstAttemptMap = {
+      ...firstAttemptMap,
+      [currentId]: isCorrect
+    };
+  }
+  const activeFirstAttemptMap = memorizeState.firstAttemptMap;
   if (isCorrect) {
+    const requiredSuccess = resolveMemorizeRequiredSuccess(currentId, activeFirstAttemptMap);
     const nextScore = Math.min(
-      MEMORIZE_REQUIRED_SUCCESS,
+      requiredSuccess,
       (memorizeState.correctMap?.[currentId] ?? 0) + 1
     );
     memorizeState.correctMap = {
       ...memorizeState.correctMap,
       [currentId]: nextScore
     };
-    if (nextScore < MEMORIZE_REQUIRED_SUCCESS) {
+    if (nextScore < requiredSuccess) {
       queue.push(currentId);
     }
   } else {
