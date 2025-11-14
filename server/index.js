@@ -155,13 +155,13 @@ const authenticateInitData = async (req, { required = true } = {}) => {
     req.telegram = { user: telegramUser };
     return user;
   } catch (error) {
-    if (error.status) {
-      throw error;
-    }
-
     if (!required) {
       console.warn('Failed to authenticate optional request; continuing as guest.', error);
       return null;
+    }
+
+    if (error.status) {
+      throw error;
     }
 
     console.error('Failed to authenticate request', error);
@@ -616,6 +616,24 @@ const server = http.createServer((req, res) => {
 
   if (parsed.pathname.startsWith('/api/')) {
     handleApi(req, res);
+    return;
+  }
+
+  if (parsed.pathname === '/favicon.ico') {
+    const fallbackIconPath = path.join(__dirname, '..', 'icons', 'icon-192.svg');
+    if (fs.existsSync(fallbackIconPath)) {
+      const icon = fs.readFileSync(fallbackIconPath);
+      res.writeHead(200, {
+        'Content-Type': 'image/svg+xml; charset=utf-8',
+        'Access-Control-Allow-Origin': '*'
+      });
+      res.end(icon);
+    } else {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*'
+      });
+      res.end();
+    }
     return;
   }
 
