@@ -42,6 +42,29 @@ paths:
           description: Некорректные данные запроса
         '409':
           description: Группа с таким именем уже существует
+  /api/users/{telegramId}:
+    get:
+      summary: Получить пользователя по Telegram ID
+      tags: [Users]
+      security: []
+      parameters:
+        - name: telegramId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Telegram ID пользователя
+      responses:
+        '200':
+          description: Данные пользователя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetails'
+        '400':
+          description: Telegram ID не указан
+        '404':
+          description: Пользователь не найден
   /api/groups/{groupId}:
     get:
       summary: Получить группу по идентификатору
@@ -313,6 +336,21 @@ components:
           type: string
           format: uri
           nullable: true
+    UserDetails:
+      allOf:
+        - $ref: '#/components/schemas/UserSummary'
+        - type: object
+          properties:
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+            historyCount:
+              type: integer
+            likesCount:
+              type: integer
     ProfileHistoryItem:
       type: object
       properties:

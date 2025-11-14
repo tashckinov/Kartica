@@ -356,6 +356,46 @@ const handleApi = async (req, res) => {
   };
 
   try {
+    if (segments.length === 3 && segments[0] === 'api' && segments[1] === 'users' && req.method === 'GET') {
+      const telegramId = decodeURIComponent(segments[2] || '').trim();
+
+      if (!telegramId) {
+        sendError(res, 400, 'Telegram ID обязателен');
+        return;
+      }
+
+      await authenticateInitData(req, { required: false });
+
+      const user = await prisma.user.findUnique({
+        where: { telegramId },
+        include: {
+          _count: {
+            select: { histories: true, likes: true }
+          }
+        }
+      });
+
+      if (!user) {
+        sendError(res, 404, 'Пользователь не найден');
+        return;
+      }
+
+      sendJson(res, 200, {
+        id: user.id,
+        telegramId: user.telegramId,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        username: user.username,
+        languageCode: user.languageCode,
+        photoUrl: user.photoUrl,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+        historyCount: user._count?.histories ?? 0,
+        likesCount: user._count?.likes ?? 0
+      });
+      return;
+    }
+
     if (parsed.pathname === '/api/me' && req.method === 'GET') {
       const { user, halt } = await ensureAuth({ required: true });
       if (halt) {

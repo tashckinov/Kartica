@@ -47,7 +47,7 @@ npm run seed
 
 ### Аутентификация запросов
 
-Гостевые запросы на чтение (`GET /api/groups`, `GET /api/groups/{groupId}`, `GET /api/groups/{groupId}/cards`) доступны без заголовка `X-Telegram-Data` — так можно посмотреть карточки даже вне Telegram.
+Гостевые запросы на чтение (`GET /api/groups`, `GET /api/groups/{groupId}`, `GET /api/groups/{groupId}/cards`, `GET /api/users/{telegramId}`) доступны без заголовка `X-Telegram-Data` — так можно посмотреть карточки и публичный профиль даже вне Telegram.
 
 Все остальные эндпоинты (`/api/me`, создание групп и карточек, отметки «нравится» и история изучения) требуют заголовка `X-Telegram-Data` с оригинальной строкой `initData`, которую Telegram WebApp передаёт клиенту. Сервер проверяет подпись при помощи `TELEGRAM_BOT_SECRET` и автоматически создаёт/обновляет пользователя по его `telegramId`.
 
@@ -61,6 +61,7 @@ npm run seed
 | `POST` | `/api/groups` | Создание новой группы. |
 | `GET` | `/api/groups/{groupId}` | Получение группы по идентификатору. |
 | `POST` | `/api/groups/{groupId}/cards` | Добавление карточки в выбранную группу. |
+| `GET` | `/api/users/{telegramId}` | Публичные данные пользователя по Telegram ID. |
 | `POST` | `/api/groups/{groupId}/history` | Фиксация факта открытия группы текущим пользователем. |
 | `POST`/`DELETE` | `/api/groups/{groupId}/like` | Добавление или удаление группы из избранного. |
 | `GET` | `/api/me` | Профиль пользователя: история и избранные группы. |

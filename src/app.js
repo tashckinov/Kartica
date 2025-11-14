@@ -1,6 +1,53 @@
 const getTelegramInitData = () => window.Telegram?.WebApp?.initData || '';
 const hasTelegramAuth = () => Boolean(getTelegramInitData());
 
+const parseTelegramInitDataUser = () => {
+  const initData = getTelegramInitData();
+  if (!initData) {
+    return null;
+  }
+
+  try {
+    const params = new URLSearchParams(initData);
+    const rawUser = params.get('user');
+    if (!rawUser) {
+      return null;
+    }
+
+    return JSON.parse(decodeURIComponent(rawUser));
+  } catch (error) {
+    console.warn('Failed to parse Telegram init data user payload', error);
+    return null;
+  }
+};
+
+const getTelegramUserId = () => {
+  const unsafeUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+  if (unsafeUser && typeof unsafeUser.id !== 'undefined' && unsafeUser.id !== null) {
+    return String(unsafeUser.id);
+  }
+
+  const parsedUser = parseTelegramInitDataUser();
+  if (parsedUser && typeof parsedUser.id !== 'undefined' && parsedUser.id !== null) {
+    return String(parsedUser.id);
+  }
+
+  return null;
+};
+
+const homeState = {
+  isLoading: false,
+  error: null,
+  user: null,
+  telegramId: null
+};
+
+const getHomeState = () => ({ ...homeState });
+
+const setHomeState = (patch = {}) => {
+  Object.assign(homeState, patch);
+};
+
 let topics = [];
 
 let profileState = {
@@ -322,6 +369,77 @@ const formatDateTime = (value) => {
     dateStyle: 'medium',
     timeStyle: 'short'
   }).format(date);
+};
+
+const formatUserDetailValue = (value) => {
+  if (value === null || typeof value === 'undefined') {
+    return '—';
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || '—';
+  }
+
+  return value;
+};
+
+const renderHomeUserContent = () => {
+  const { isLoading, error, user, telegramId } = getHomeState();
+
+  if (isLoading) {
+    return '<div class="info-state" data-state="loading">Загружаем данные пользователя...</div>';
+  }
+
+  if (error) {
+    return `<div class="info-state" data-state="error">${error}</div>`;
+  }
+
+  if (!user) {
+    if (telegramId) {
+      return `<div class="info-state">Пользователь с Telegram ID ${telegramId} не найден.</div>`;
+    }
+
+    return '<div class="info-state">Telegram ID не найден. Откройте приложение в Telegram.</div>';
+  }
+
+  const rows = [
+    { label: 'Telegram ID', value: user.telegramId },
+    { label: 'Имя', value: user.firstName },
+    { label: 'Фамилия', value: user.lastName },
+    { label: 'Имя пользователя', value: user.username ? `@${user.username}` : null },
+    { label: 'Язык интерфейса', value: user.languageCode },
+    { label: 'Историй изучения', value: typeof user.historyCount === 'number' ? user.historyCount : null },
+    { label: 'Избранных групп', value: typeof user.likesCount === 'number' ? user.likesCount : null },
+    { label: 'Создан', value: formatDateTime(user.createdAt) || null },
+    { label: 'Обновлён', value: formatDateTime(user.updatedAt) || null }
+  ];
+
+  return `
+    <section class="home-user">
+      <header class="home-user-header">
+        <h1 class="home-user-title">Данные пользователя</h1>
+        <p class="home-user-subtitle">Информация загружена по Telegram ID ${user.telegramId}.</p>
+      </header>
+      ${
+        user.photoUrl
+          ? `<div class="home-user-photo"><img src="${user.photoUrl}" alt="Аватар пользователя" loading="lazy" /></div>`
+          : ''
+      }
+      <dl class="home-user-details">
+        ${rows
+          .map(
+            (item) => `
+              <div class="home-user-row">
+                <dt>${item.label}</dt>
+                <dd>${formatUserDetailValue(item.value)}</dd>
+              </div>
+            `
+          )
+          .join('')}
+      </dl>
+    </section>
+  `;
 };
 
 const renderProfileGroupList = (items, { emptyText, metaFormatter } = {}) => {
@@ -744,6 +862,58 @@ export const createApp = (root) => {
     }
   };
 
+  const loadHomeUser = async ({ silent = false } = {}) => {
+    const telegramId = getTelegramUserId();
+
+    if (!telegramId) {
+      setHomeState({
+        isLoading: false,
+        error: 'Telegram ID не найден. Откройте приложение в Telegram.',
+        user: null,
+        telegramId: null
+      });
+      if (!silent && activeTab === 'home') {
+        render();
+      }
+      return;
+    }
+
+    setHomeState({
+      isLoading: true,
+      error: null,
+      user: null,
+      telegramId
+    });
+    if (!silent && activeTab === 'home') {
+      render();
+    }
+
+    try {
+      const payload = await requestJson(`/api/users/${encodeURIComponent(telegramId)}`);
+      setHomeState({
+        isLoading: false,
+        error: null,
+        user: payload,
+        telegramId
+      });
+    } catch (error) {
+      const message =
+        error && error.status === 404
+          ? `Пользователь с Telegram ID ${telegramId} не найден.`
+          : 'Не удалось загрузить данные пользователя. Попробуйте обновить страницу.';
+      setHomeState({
+        isLoading: false,
+        error: message,
+        user: null,
+        telegramId
+      });
+    }
+
+    if (!silent && activeTab === 'home') {
+      render();
+    }
+  };
+
   const markGroupVisited = async (groupId) => {
     if (!Number.isInteger(groupId)) {
       return;
@@ -757,6 +927,7 @@ export const createApp = (root) => {
     try {
       await requestJson(`/api/groups/${groupId}/history`, { method: 'POST' });
       await loadProfile({ silent: true });
+      await loadHomeUser({ silent: true });
     } catch (error) {
       console.error('Не удалось обновить историю пользователя', error);
     }
@@ -786,6 +957,7 @@ export const createApp = (root) => {
       applyTopicLike(groupId, shouldLike);
       render();
       await loadProfile({ silent: true });
+      await loadHomeUser({ silent: true });
     } catch (error) {
       console.error('Не удалось обновить список избранного', error);
     }
@@ -801,6 +973,8 @@ export const createApp = (root) => {
         render();
       }
     }
+
+    await loadHomeUser({ silent });
 
     if (!authorized) {
       return;
@@ -869,19 +1043,7 @@ export const createApp = (root) => {
     return payload;
   };
 
-  const renderHome = () => {
-    if (!activeTopicId) {
-      return renderTopicsHome();
-    }
-
-    const topic = getActiveTopic();
-    if (!topic) {
-      activeTopicId = null;
-      return renderTopicsHome();
-    }
-
-    return renderTopicDetail(topic);
-  };
+  const renderHome = () => renderHomeUserContent();
 
   const updateNav = () => {
     navButtons.forEach((button) => {
@@ -1040,6 +1202,7 @@ export const createApp = (root) => {
     }
   });
 
+  loadHomeUser();
   loadTopics();
   loadProfile();
 
