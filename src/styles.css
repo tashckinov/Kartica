@@ -600,6 +600,12 @@ body.admin-route #app {
   object-fit: cover;
 }
 
+.flashcard img {
+  object-fit: contain;
+  object-position: center;
+  background: color-mix(in srgb, var(--surface-color) 92%, transparent);
+}
+
 .flashcard-image-placeholder {
   display: flex;
   align-items: center;
@@ -946,7 +952,9 @@ body.admin-route #app {
   display: block;
   width: 100%;
   height: clamp(160px, 32vw, 220px);
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
+  background: color-mix(in srgb, var(--surface-color) 92%, transparent);
 }
 
 .memorize-card-body {
@@ -1311,7 +1319,9 @@ body.admin-route #app {
   display: block;
   width: 100%;
   height: auto;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
+  background: color-mix(in srgb, var(--surface-color) 92%, transparent);
 }
 
 .study-card-placeholder {
