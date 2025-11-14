@@ -643,14 +643,6 @@ body.study-open {
   margin: 0;
 }
 
-.profile-card ul {
-  margin: 0;
-  padding-left: 20px;
-  color: var(--muted-text-color);
-  display: grid;
-  gap: 6px;
-}
-
 .profile-favorites {
   gap: clamp(12px, 4vw, 18px);
 }

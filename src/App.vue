@@ -16,14 +16,6 @@
             </div>
             <p v-else class="profile-placeholder">{{ profileFallbackText }}</p>
           </div>
-          <div class="profile-card">
-            <h3>Советы</h3>
-            <ul>
-              <li>Повторяйте карточки каждый день.</li>
-              <li>Добавляйте свои темы, когда появится возможность.</li>
-              <li>Используйте приложение в Telegram mini app для синхронизации.</li>
-            </ul>
-          </div>
           <div class="profile-card profile-favorites">
             <h3>Избранные темы</h3>
             <div v-if="isFavoritesLoading" class="profile-favorites-state" aria-live="polite">
