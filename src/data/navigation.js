@@ -11,6 +11,15 @@ export const navItems = [
     `
   },
   {
+    id: 'favorites',
+    label: 'Избранное',
+    icon: `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m12 4 2.27 4.6 5.08.74-3.67 3.58.87 5.03L12 15.9l-4.55 2.99.87-5.03-3.67-3.58 5.08-.74z" />
+      </svg>
+    `
+  },
+  {
     id: 'profile',
     label: 'Профиль',
     icon: `
