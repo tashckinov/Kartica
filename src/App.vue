@@ -161,7 +161,25 @@
         <div class="profile-screen">
           <div class="profile-card">
             <h2>Профиль</h2>
-            <p>Здесь появится информация об успехах и прогрессе.</p>
+            <div v-if="isProfileReady" class="profile-user" data-telegram-user>
+              <div class="profile-avatar" :data-has-photo="userProfile.photoUrl ? 'true' : 'false'">
+                <img
+                  v-if="userProfile.photoUrl"
+                  :src="userProfile.photoUrl"
+                  :alt="`Аватар пользователя ${profileDisplayName}`"
+                  loading="lazy"
+                />
+                <span v-else aria-hidden="true">{{ profileInitials }}</span>
+              </div>
+              <div class="profile-user-info">
+                <span class="profile-user-name">{{ profileDisplayName }}</span>
+                <span v-if="showProfileUsername" class="profile-user-username">@{{ userProfile.username }}</span>
+                <span v-if="userProfile.languageCode" class="profile-user-language">
+                  Язык интерфейса: {{ userProfile.languageCode.toUpperCase() }}
+                </span>
+              </div>
+            </div>
+            <p v-else class="profile-placeholder">{{ profileFallbackText }}</p>
           </div>
           <div class="profile-card">
             <h3>Советы</h3>
@@ -322,6 +340,113 @@ const studyProgress = computed(() => {
     current: Math.min(studyState.cardIndex + 1, total),
     total
   };
+});
+
+const userProfile = reactive({
+  id: null,
+  username: '',
+  firstName: '',
+  lastName: '',
+  photoUrl: '',
+  languageCode: ''
+});
+const isTelegramEnvironment = ref(false);
+
+const setUserProfile = (user = {}) => {
+  userProfile.id = user.id ?? null;
+  userProfile.username = user.username ?? '';
+  userProfile.firstName = user.first_name ?? user.firstName ?? '';
+  userProfile.lastName = user.last_name ?? user.lastName ?? '';
+  userProfile.photoUrl = user.photo_url ?? user.photoUrl ?? '';
+  userProfile.languageCode = user.language_code ?? user.languageCode ?? '';
+};
+
+const parseTelegramUserFromInitData = (initData) => {
+  if (!initData || typeof initData !== 'string') {
+    return null;
+  }
+  try {
+    const params = new URLSearchParams(initData);
+    const rawUser = params.get('user');
+    if (!rawUser) {
+      return null;
+    }
+    return JSON.parse(rawUser);
+  } catch (error) {
+    console.warn('Не удалось разобрать пользователя из initData', error);
+    return null;
+  }
+};
+
+const initTelegramIntegration = () => {
+  const webApp = window.Telegram?.WebApp;
+  let initData = '';
+  let telegramUser = null;
+
+  if (webApp) {
+    isTelegramEnvironment.value = true;
+    initData = webApp.initData || '';
+    telegramUser = webApp.initDataUnsafe?.user || null;
+  }
+
+  if (!telegramUser && !initData) {
+    const params = new URLSearchParams(window.location.search);
+    initData = params.get('tgWebAppInitData') || params.get('initData') || '';
+    if (initData) {
+      isTelegramEnvironment.value = true;
+    }
+  }
+
+  if (!telegramUser) {
+    telegramUser = parseTelegramUserFromInitData(initData) || null;
+  }
+
+  if (telegramUser) {
+    setUserProfile(telegramUser);
+  }
+};
+
+const profileNameParts = computed(() =>
+  [userProfile.firstName, userProfile.lastName]
+    .map((part) => (typeof part === 'string' ? part.trim() : ''))
+    .filter(Boolean)
+);
+
+const profileDisplayName = computed(() => {
+  if (profileNameParts.value.length) {
+    return profileNameParts.value.join(' ');
+  }
+  if (userProfile.username) {
+    return `@${userProfile.username}`;
+  }
+  return '';
+});
+
+const profileInitials = computed(() => {
+  if (profileNameParts.value.length) {
+    return profileNameParts.value
+      .map((part) => part.charAt(0))
+      .join('')
+      .slice(0, 2)
+      .toUpperCase();
+  }
+  if (userProfile.username) {
+    return userProfile.username.slice(0, 2).toUpperCase();
+  }
+  return 'TG';
+});
+
+const isProfileReady = computed(() => Boolean(profileDisplayName.value));
+
+const showProfileUsername = computed(
+  () => profileNameParts.value.length > 0 && Boolean(userProfile.username)
+);
+
+const profileFallbackText = computed(() => {
+  if (!isTelegramEnvironment.value) {
+    return 'Откройте приложение в Telegram Mini App, чтобы увидеть информацию профиля.';
+  }
+  return 'Telegram не передал данные пользователя.';
 });
 
 const buildApiUrl = (path, params = {}) => {
@@ -563,6 +688,7 @@ watch(studyCard, (card) => {
 });
 
 onMounted(() => {
+  initTelegramIntegration();
   loadTopics(1);
 });
 
