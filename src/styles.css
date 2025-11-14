@@ -313,6 +313,7 @@ body.study-open {
   color: color-mix(in srgb, var(--text-color) 80%, var(--muted-text-color));
   cursor: pointer;
   transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  z-index: 2;
 }
 
 .topic-card-favorite svg {
