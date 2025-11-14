@@ -2,9 +2,35 @@ import { createApp } from './app.js';
 
 const root = document.getElementById('app');
 const telegramWebApp = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
-const initialUser =
-  telegramWebApp && telegramWebApp.initDataUnsafe ? telegramWebApp.initDataUnsafe.user : null;
-const app = createApp(root, { user: initialUser });
+const app = createApp(root, { user: null });
+
+const fetchVerifiedTelegramUser = async (webApp) => {
+  if (!webApp || !webApp.initData) {
+    return null;
+  }
+
+  try {
+    const response = await fetch('/api/user', {
+      method: 'GET',
+      headers: {
+        'X-Telegram-Data': webApp.initData
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to verify Telegram user: ${response.status}`);
+    }
+
+    const payload = await response.json();
+    if (payload && typeof payload === 'object' && 'user' in payload) {
+      return payload.user ?? null;
+    }
+    return null;
+  } catch (error) {
+    console.warn('Unable to fetch verified Telegram user', error);
+    return undefined;
+  }
+};
 
 const setCSSVariable = (name, value) => {
   if (!value) return;
@@ -89,7 +115,15 @@ ensureDefaultTheme();
 
 if (telegramWebApp) {
   const webApp = telegramWebApp;
-  app.setUser(webApp.initDataUnsafe ? webApp.initDataUnsafe.user : null);
+  if (webApp.initDataUnsafe && webApp.initDataUnsafe.user) {
+    app.setUser(webApp.initDataUnsafe.user);
+  }
+
+  fetchVerifiedTelegramUser(webApp).then((user) => {
+    if (user !== undefined) {
+      app.setUser(user);
+    }
+  });
   webApp.ready();
   webApp.expand();
   applyTelegramTheme(webApp.themeParams || {});
