@@ -1,6 +1,56 @@
+const path = require('path');
+const fs = require('fs');
+const { execSync } = require('child_process');
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
 const crypto = require('crypto');
+
+const ensurePrismaClientIsGenerated = () => {
+  const apiRoot = path.join(__dirname, '..');
+  const schemaPath = path.join(apiRoot, 'prisma', 'schema.prisma');
+  const generatedSchemaPath = path.join(apiRoot, 'node_modules', '.prisma', 'client', 'schema.prisma');
+
+  let shouldRegenerate = false;
+
+  try {
+    const sourceStats = fs.statSync(schemaPath);
+    const generatedStats = fs.statSync(generatedSchemaPath);
+    if (sourceStats.mtimeMs > generatedStats.mtimeMs) {
+      shouldRegenerate = true;
+    }
+  } catch (error) {
+    shouldRegenerate = true;
+  }
+
+  if (!shouldRegenerate) {
+    try {
+      const generatedSchemaContents = fs.readFileSync(generatedSchemaPath, 'utf8');
+      if (!generatedSchemaContents.includes('claimTokenHash')) {
+        shouldRegenerate = true;
+      }
+    } catch (error) {
+      shouldRegenerate = true;
+    }
+  }
+
+  if (!shouldRegenerate) {
+    return;
+  }
+
+  try {
+    execSync('npx prisma generate', {
+      cwd: apiRoot,
+      stdio: 'ignore',
+      env: process.env,
+    });
+  } catch (error) {
+    console.error('Не удалось обновить Prisma Client. Запустите "npm run prisma:generate" вручную.', error);
+    throw error;
+  }
+};
+
+ensurePrismaClientIsGenerated();
+
+const { PrismaClient } = require('@prisma/client');
 
 const app = express();
 const prisma = new PrismaClient();
