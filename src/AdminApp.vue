@@ -6,13 +6,30 @@
         <p class="muted">
           Авторизуйтесь через Telegram, чтобы управлять контентом карточек.
         </p>
-        <p v-if="!telegramDataAvailable" class="muted">
-          Откройте панель в Telegram Mini App или передайте параметры <code>tgWebAppInitData</code>.
+        <p v-if="telegramWebAppAvailable" class="muted">
+          Данные Telegram переданы автоматически. Нажмите кнопку ниже, чтобы подтвердить вход.
         </p>
+        <p v-else-if="externalLoginAvailable" class="muted">
+          Откройте панель в любом браузере и нажмите кнопку ниже — Telegram откроет окно подтверждения.
+        </p>
+        <p v-else class="muted">
+          Откройте панель внутри Telegram Mini App или укажите <code>VITE_ADMIN_TELEGRAM_BOT_USERNAME</code> для внешнего входа.
+        </p>
+        <p v-if="loginPending && !telegramWebAppAvailable" class="muted pending-message">Ожидаем подтверждение…</p>
         <p v-if="loginError" class="form-error">{{ loginError }}</p>
-        <button type="button" class="primary-button" @click="handleTelegramLogin" :disabled="loginPending">
+        <button
+          v-if="telegramWebAppAvailable"
+          type="button"
+          class="primary-button"
+          @click="handleTelegramLogin"
+          :disabled="loginPending"
+        >
           {{ loginPending ? 'Ожидаем подтверждение…' : 'Авторизоваться через Telegram' }}
         </button>
+        <div v-else-if="externalLoginAvailable" class="external-login-wrapper">
+          <div ref="telegramLoginContainer" class="telegram-login-container"></div>
+          <p v-if="externalLoginError" class="form-error">{{ externalLoginError }}</p>
+        </div>
       </div>
     </div>
     <div v-else class="admin-dashboard">
@@ -153,14 +170,20 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { apiBaseUrl } from './apiConfig.js';
 
 const loginError = ref('');
 const loginPending = ref(false);
 const isAuthenticated = ref(false);
 const telegramUser = ref(null);
-const telegramDataAvailable = ref(true);
+
+const telegramBotUsername = (import.meta.env.VITE_ADMIN_TELEGRAM_BOT_USERNAME || '').trim();
+const telegramWebAppAvailable = ref(false);
+const telegramLoginContainer = ref(null);
+const externalLoginError = ref('');
+
+const externalLoginAvailable = computed(() => Boolean(telegramBotUsername));
 
 const buildApiUrl = (path, params = {}) => {
   const url = new URL(path, `${apiBaseUrl}/`);
@@ -426,6 +449,18 @@ const decodeTelegramUser = (raw) => {
         if (userRaw) {
           return JSON.parse(userRaw);
         }
+        const id = params.get('id');
+        const hash = params.get('hash');
+        const authDate = params.get('auth_date');
+        if (id && hash && authDate) {
+          return {
+            id,
+            first_name: params.get('first_name') || undefined,
+            last_name: params.get('last_name') || undefined,
+            username: params.get('username') || undefined,
+            photo_url: params.get('photo_url') || undefined,
+          };
+        }
       } catch (error) {
         // ignore parse errors
       }
@@ -474,63 +509,112 @@ const decodeTelegramUser = (raw) => {
   return null;
 };
 
+const TELEGRAM_WIDGET_PARAM_KEYS = [
+  'id',
+  'first_name',
+  'last_name',
+  'username',
+  'photo_url',
+  'auth_date',
+  'hash',
+  'state',
+];
+
+const extractWidgetAuthFromParams = (params) => {
+  if (!params) {
+    return null;
+  }
+  const hash = params.get('hash');
+  const id = params.get('id');
+  const authDate = params.get('auth_date');
+  if (!hash || !id || !authDate) {
+    return null;
+  }
+
+  const filtered = new URLSearchParams();
+  TELEGRAM_WIDGET_PARAM_KEYS.forEach((key) => {
+    const value = params.get(key);
+    if (value !== null && value !== undefined && value !== '') {
+      filtered.set(key, value);
+    }
+  });
+
+  if (!filtered.get('id') || !filtered.get('hash') || !filtered.get('auth_date')) {
+    return null;
+  }
+
+  return {
+    initData: filtered.toString(),
+    user: {
+      id: filtered.get('id'),
+      first_name: filtered.get('first_name') || undefined,
+      last_name: filtered.get('last_name') || undefined,
+      username: filtered.get('username') || undefined,
+      photo_url: filtered.get('photo_url') || undefined,
+    },
+  };
+};
+
 const resolveTelegramInitData = () => {
   if (typeof window === 'undefined') {
-    telegramDataAvailable.value = false;
-    return { initData: '', user: null };
+    telegramWebAppAvailable.value = false;
+    return { initData: '', user: null, source: 'none' };
   }
 
   const webApp = window.Telegram?.WebApp;
-  if (webApp && typeof webApp === 'object') {
-    if (webApp.initData) {
-      telegramDataAvailable.value = true;
-      return { initData: webApp.initData, user: webApp.initDataUnsafe?.user || null };
-    }
-    if (webApp.initDataUnsafe?.user) {
-      telegramDataAvailable.value = true;
-    }
+  if (webApp && typeof webApp === 'object' && typeof webApp.initData === 'string' && webApp.initData.trim()) {
+    telegramWebAppAvailable.value = true;
+    return { initData: webApp.initData, user: webApp.initDataUnsafe?.user || null, source: 'webapp' };
   }
 
   const searchParams = new URLSearchParams(window.location.search || '');
   const searchInitData = searchParams.get('tgWebAppInitData') || searchParams.get('initData');
   if (searchInitData) {
-    telegramDataAvailable.value = true;
-    return { initData: searchInitData, user: decodeTelegramUser(searchInitData) };
+    telegramWebAppAvailable.value = true;
+    return { initData: searchInitData, user: decodeTelegramUser(searchInitData), source: 'query' };
   }
 
-  const hash = typeof window.location?.hash === 'string' ? window.location.hash.slice(1) : '';
-  if (hash) {
-    const hashParams = new URLSearchParams(hash);
+  const hashRaw = typeof window.location?.hash === 'string' ? window.location.hash.slice(1) : '';
+  if (hashRaw) {
+    const hashParams = new URLSearchParams(hashRaw);
     const hashInitData = hashParams.get('tgWebAppData') || hashParams.get('tgWebAppInitData');
     if (hashInitData) {
-      telegramDataAvailable.value = true;
-      return { initData: hashInitData, user: decodeTelegramUser(hashInitData) };
+      telegramWebAppAvailable.value = true;
+      return { initData: hashInitData, user: decodeTelegramUser(hashInitData), source: 'hash' };
+    }
+    const widgetFromHash = extractWidgetAuthFromParams(hashParams);
+    if (widgetFromHash) {
+      telegramWebAppAvailable.value = false;
+      return { ...widgetFromHash, source: 'widget-hash' };
     }
   }
 
-  telegramDataAvailable.value = false;
-  return { initData: '', user: null };
+  const widgetFromSearch = extractWidgetAuthFromParams(searchParams);
+  if (widgetFromSearch) {
+    telegramWebAppAvailable.value = false;
+    return { ...widgetFromSearch, source: 'widget-query' };
+  }
+
+  telegramWebAppAvailable.value = false;
+  return { initData: '', user: null, source: 'none' };
 };
 
-const handleTelegramLogin = async () => {
-  loginError.value = '';
-
-  const { initData, user } = resolveTelegramInitData();
-
-  if (!initData || !initData.trim()) {
+const loginWithInitData = async (initData, fallbackUser = null) => {
+  const normalized = typeof initData === 'string' ? initData.trim() : '';
+  if (!normalized) {
     loginError.value = 'Telegram не передал данные для авторизации.';
-    telegramDataAvailable.value = false;
     return;
   }
 
   loginPending.value = true;
+  loginError.value = '';
 
   try {
     const response = await fetch(buildApiUrl('/auth/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ initData: initData.trim() }),
+      body: JSON.stringify({ initData: normalized }),
     });
 
     if (!response.ok) {
@@ -539,17 +623,123 @@ const handleTelegramLogin = async () => {
 
     const data = await response.json();
     isAuthenticated.value = true;
-    telegramUser.value = data?.user || user || null;
+    telegramUser.value = data?.user || fallbackUser || decodeTelegramUser(normalized) || null;
     showFeedback('success', 'Вы успешно вошли в админку');
     await fetchGroups();
   } catch (error) {
     console.error('Failed to authorize via Telegram', error);
-    clearAuthState();
-    loginError.value = error instanceof Error && error.message ? error.message : 'Не удалось авторизоваться через Telegram';
+    loginError.value =
+      error instanceof Error && error.message
+        ? error.message
+        : 'Не удалось авторизоваться через Telegram';
   } finally {
     loginPending.value = false;
   }
 };
+
+const handleTelegramLogin = async () => {
+  loginError.value = '';
+
+  const { initData, user } = resolveTelegramInitData();
+
+  if (!initData || !initData.trim()) {
+    if (telegramWebAppAvailable.value) {
+      loginError.value = 'Telegram не передал данные для авторизации.';
+    } else if (externalLoginAvailable.value) {
+      loginError.value = 'Используйте кнопку входа через Telegram ниже.';
+    } else {
+      loginError.value = 'Настройте передачу данных Telegram для авторизации.';
+    }
+    return;
+  }
+
+  await loginWithInitData(initData, user);
+};
+
+const handleExternalAuthPayload = async (payload) => {
+  if (!payload || typeof payload !== 'object') {
+    loginError.value = 'Telegram не передал данные для авторизации.';
+    return;
+  }
+
+  const params = new URLSearchParams();
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') {
+      return;
+    }
+    params.set(key, String(value));
+  });
+
+  if (!params.toString()) {
+    loginError.value = 'Telegram не передал данные для авторизации.';
+    return;
+  }
+
+  await loginWithInitData(params.toString(), payload);
+};
+
+const mountExternalTelegramWidget = () => {
+  if (!externalLoginAvailable.value || typeof window === 'undefined') {
+    return;
+  }
+
+  const container = telegramLoginContainer.value;
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML = '';
+  externalLoginError.value = '';
+
+  const script = document.createElement('script');
+  script.src = 'https://telegram.org/js/telegram-widget.js?22';
+  script.async = true;
+  script.setAttribute('data-telegram-login', telegramBotUsername);
+  script.setAttribute('data-size', 'large');
+  script.setAttribute('data-userpic', 'false');
+  script.setAttribute('data-request-access', 'write');
+  script.setAttribute('data-lang', 'ru');
+  script.setAttribute('data-radius', '6');
+  script.setAttribute('data-onauth', '__karticaOnTelegramAuth');
+  script.onerror = () => {
+    externalLoginError.value =
+      'Не удалось загрузить виджет Telegram. Проверьте подключение к сети и настройки бота.';
+  };
+
+  container.appendChild(script);
+};
+
+if (typeof window !== 'undefined') {
+  window.__karticaOnTelegramAuth = (authData) => {
+    handleExternalAuthPayload(authData);
+  };
+}
+
+watch(
+  [() => telegramLoginContainer.value, () => telegramWebAppAvailable.value, () => isAuthenticated.value],
+  ([container, webAppAvailable, authenticated]) => {
+    if (!container) {
+      return;
+    }
+    if (authenticated) {
+      container.innerHTML = '';
+      return;
+    }
+    if (!webAppAvailable && externalLoginAvailable.value) {
+      mountExternalTelegramWidget();
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => externalLoginAvailable.value,
+  (available) => {
+    if (available && !isAuthenticated.value && !telegramWebAppAvailable.value) {
+      mountExternalTelegramWidget();
+    }
+  }
+);
 
 const adminUserLabel = computed(() => {
   const user = telegramUser.value;
@@ -766,14 +956,32 @@ const restoreSession = async () => {
   }
 };
 
-onMounted(() => {
-  resolveTelegramInitData();
-  restoreSession();
+onMounted(async () => {
+  const initialAuth = resolveTelegramInitData();
+
+  if (!telegramWebAppAvailable.value && externalLoginAvailable.value) {
+    await nextTick();
+    mountExternalTelegramWidget();
+  }
+
+  await restoreSession();
+
+  if (
+    !isAuthenticated.value &&
+    initialAuth.initData &&
+    typeof initialAuth.source === 'string' &&
+    initialAuth.source.startsWith('widget')
+  ) {
+    await loginWithInitData(initialAuth.initData, initialAuth.user);
+  }
 });
 
 onBeforeUnmount(() => {
   if (feedbackTimer) {
     clearTimeout(feedbackTimer);
+  }
+  if (typeof window !== 'undefined' && window.__karticaOnTelegramAuth) {
+    delete window.__karticaOnTelegramAuth;
   }
 });
 </script>
@@ -820,6 +1028,28 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   font-size: 14px;
   color: #0f172a;
+}
+
+.pending-message {
+  color: #4b5563;
+}
+
+.external-login-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.telegram-login-container {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.telegram-login-container iframe {
+  max-width: 100%;
 }
 
 .admin-dashboard {

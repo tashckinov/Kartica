@@ -151,6 +151,7 @@ const parseTelegramInitData = (initDataRaw) => {
   const authDate = Number.parseInt(params.get('auth_date'), 10);
   const userRaw = params.get('user');
   let user = null;
+  let authSource = 'webapp';
 
   if (userRaw) {
     try {
@@ -160,7 +161,25 @@ const parseTelegramInitData = (initDataRaw) => {
     }
   }
 
-  return { hash, dataCheckString: entries.join('\n'), authDate, user };
+  if (!user) {
+    const idRaw = params.get('id');
+    if (idRaw) {
+      authSource = 'widget';
+      user = {
+        id: idRaw,
+        first_name: params.get('first_name') || undefined,
+        last_name: params.get('last_name') || undefined,
+        username: params.get('username') || undefined,
+        photo_url: params.get('photo_url') || undefined,
+      };
+    }
+  }
+
+  if (!user) {
+    throw new Error('Telegram не передал пользователя');
+  }
+
+  return { hash, dataCheckString: entries.join('\n'), authDate, user, authSource };
 };
 
 const verifyTelegramLogin = (initDataRaw) => {
@@ -168,12 +187,11 @@ const verifyTelegramLogin = (initDataRaw) => {
     throw new Error('Telegram авторизация не настроена на сервере');
   }
 
-  const { hash, dataCheckString, authDate, user } = parseTelegramInitData(initDataRaw);
+  const { hash, dataCheckString, authDate, user, authSource } = parseTelegramInitData(initDataRaw);
 
-  const secretKey = crypto
-    .createHash('sha256')
-    .update(`WebAppData${TELEGRAM_BOT_TOKEN}`)
-    .digest();
+  const secretSeed =
+    authSource === 'widget' ? TELEGRAM_BOT_TOKEN : `WebAppData${TELEGRAM_BOT_TOKEN}`;
+  const secretKey = crypto.createHash('sha256').update(secretSeed).digest();
   const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
   if (calculatedHash !== hash) {
