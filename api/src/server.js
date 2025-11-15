@@ -27,18 +27,21 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
 ];
-const configuredAllowedOrigins = [
+const configuredAllowedOriginsRaw = [
   process.env.ADMIN_ALLOWED_ORIGINS,
   process.env.ADMIN_ALLOWED_ORIGIN,
 ]
-  .filter(Boolean)
+  .filter((value) => typeof value === 'string' && value.trim())
+  .map((value) => value.trim())
   .join(',');
 
-const ALLOWED_ORIGINS = (configuredAllowedOrigins
-  ? configuredAllowedOrigins.split(',')
+const STATIC_ALLOWED_ORIGINS = (configuredAllowedOriginsRaw
+  ? configuredAllowedOriginsRaw.split(',')
   : DEFAULT_ALLOWED_ORIGINS)
   .map((origin) => origin.trim())
   .filter(Boolean);
+
+const hasExplicitAllowedOrigins = Boolean(configuredAllowedOriginsRaw);
 
 const activeSessions = new Map();
 const ADMIN_GROUP_OWNERSHIP_ERROR = 'Можно изменять только созданные вами группы';
@@ -342,14 +345,35 @@ const extractTelegramUserId = (user) => {
 app.use(express.json());
 
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  const allowedOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  const originHeader = req.headers.origin;
+  let allowedOrigin = '';
+
+  if (originHeader && STATIC_ALLOWED_ORIGINS.includes(originHeader)) {
+    allowedOrigin = originHeader;
+  } else if (originHeader && !hasExplicitAllowedOrigins) {
+    allowedOrigin = originHeader;
+  } else if (STATIC_ALLOWED_ORIGINS.length) {
+    [allowedOrigin] = STATIC_ALLOWED_ORIGINS;
+  }
 
   if (allowedOrigin) {
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   }
-  if (origin) {
-    res.setHeader('Vary', 'Origin');
+  if (originHeader) {
+    const existingVary = res.getHeader('Vary');
+    if (!existingVary) {
+      res.setHeader('Vary', 'Origin');
+    } else if (Array.isArray(existingVary)) {
+      if (!existingVary.includes('Origin')) {
+        res.setHeader('Vary', [...existingVary, 'Origin']);
+      }
+    } else if (typeof existingVary === 'string') {
+      const parts = existingVary.split(/,\s*/).filter(Boolean);
+      if (!parts.includes('Origin')) {
+        parts.push('Origin');
+        res.setHeader('Vary', parts.join(', '));
+      }
+    }
   }
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');

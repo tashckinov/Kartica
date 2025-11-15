@@ -9,12 +9,16 @@
         <p v-if="telegramWebAppAvailable" class="muted">
           Данные Telegram переданы автоматически. Нажмите кнопку ниже, чтобы подтвердить вход.
         </p>
+        <p v-else-if="telegramConfigLoading" class="muted">
+          Загружаем параметры входа через Telegram…
+        </p>
         <p v-else-if="externalLoginAvailable" class="muted">
           Откройте панель в любом браузере и нажмите кнопку ниже — Telegram откроет окно подтверждения.
         </p>
         <p v-else class="muted">
-          Откройте панель внутри Telegram Mini App или дождитесь появления кнопки входа через Telegram в браузере.
+          Откройте панель внутри Telegram Mini App или убедитесь, что сервер настроен для внешнего входа через Telegram.
         </p>
+        <p v-if="externalLoginError && !externalLoginAvailable" class="form-error">{{ externalLoginError }}</p>
         <p v-if="loginPending && !telegramWebAppAvailable" class="muted pending-message">Ожидаем подтверждение…</p>
         <p v-if="loginError" class="form-error">{{ loginError }}</p>
         <button
@@ -263,6 +267,7 @@ const telegramBotUsername = ref('');
 const telegramWebAppAvailable = ref(false);
 const telegramLoginContainer = ref(null);
 const externalLoginError = ref('');
+const telegramConfigLoading = ref(true);
 
 const externalLoginAvailable = computed(() => Boolean(telegramBotUsername.value));
 
@@ -278,8 +283,12 @@ const buildApiUrl = (path, params = {}) => {
 
 const loadTelegramLoginConfig = async () => {
   if (typeof window === 'undefined') {
+    telegramConfigLoading.value = false;
     return;
   }
+
+  telegramConfigLoading.value = true;
+  externalLoginError.value = '';
 
   try {
     const response = await fetch(buildApiUrl('/auth/telegram-config'), {
@@ -326,6 +335,8 @@ const loadTelegramLoginConfig = async () => {
     telegramBotUsername.value = '';
     externalLoginError.value =
       'Не удалось получить настройки Telegram. Попробуйте обновить страницу.';
+  } finally {
+    telegramConfigLoading.value = false;
   }
 };
 
