@@ -1,6 +1,49 @@
 const TelegramBot = require('node-telegram-bot-api');
 
 let bot = null;
+let isStopping = false;
+
+const isUnauthorizedError = (error) => {
+  if (!error) {
+    return false;
+  }
+
+  if (error.code === 'ETELEGRAM') {
+    const statusCode = error.response?.statusCode || error.response?.body?.error_code;
+    if (statusCode === 401) {
+      return true;
+    }
+    const message = typeof error.message === 'string' ? error.message : '';
+    if (message.includes('401') && message.toLowerCase().includes('unauthorized')) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const stopPollingSafely = async (currentBot) => {
+  if (!currentBot || isStopping) {
+    return;
+  }
+
+  isStopping = true;
+
+  try {
+    currentBot.removeAllListeners('polling_error');
+    currentBot.removeAllListeners('text');
+
+    await currentBot.stopPolling();
+  } catch (stopError) {
+    console.error('Не удалось корректно остановить Telegram-бота.', stopError);
+  } finally {
+    if (bot === currentBot) {
+      bot = null;
+    }
+
+    isStopping = false;
+  }
+};
 
 const getTelegramToken = () => (process.env.ADMIN_TELEGRAM_BOT_TOKEN || '').trim();
 
@@ -72,9 +115,36 @@ const startTelegramBot = () => {
     }
   });
 
-  bot.on('polling_error', (error) => {
+  const handlePollingError = async (error) => {
+    if (isUnauthorizedError(error)) {
+      console.error(
+        'Telegram отклонил ADMIN_TELEGRAM_BOT_TOKEN. Остановлен опрос обновлений. Проверьте корректность токена.',
+        error,
+      );
+      const activeBot = bot;
+      await stopPollingSafely(activeBot);
+      return;
+    }
+
     console.error('Ошибка при получении обновлений Telegram:', error);
-  });
+  };
+
+  bot.on('polling_error', handlePollingError);
+
+  bot
+    .getMe()
+    .catch(async (error) => {
+      if (isUnauthorizedError(error)) {
+        console.error(
+          'Telegram отклонил ADMIN_TELEGRAM_BOT_TOKEN при попытке получить информацию о боте. Остановлен опрос обновлений. Проверьте переменную окружения.',
+          error,
+        );
+        const activeBot = bot;
+        await stopPollingSafely(activeBot);
+      } else {
+        console.error('Не удалось получить информацию о Telegram-боте.', error);
+      }
+    });
 
   console.log('Telegram bot polling started.');
 
