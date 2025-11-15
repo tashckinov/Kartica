@@ -1,6 +1,7 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const crypto = require('crypto');
+const sshpk = require('sshpk');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -36,9 +37,29 @@ const normalizeSshPublicKey = (key) => {
 const ADMIN_PUBLIC_KEY_NORMALIZED = normalizeSshPublicKey(ADMIN_PUBLIC_KEY);
 
 const derivePublicKeyFromPrivate = (privateKeyContent) => {
-  const privateKey = crypto.createPrivateKey({ key: privateKeyContent });
-  const publicKey = crypto.createPublicKey(privateKey);
-  return publicKey.export({ format: 'ssh' }).toString();
+  const normalizedContent = typeof privateKeyContent === 'string' ? privateKeyContent.trim() : privateKeyContent;
+  const attempts = [
+    () => {
+      const privateKey = crypto.createPrivateKey({ key: normalizedContent });
+      const publicKey = crypto.createPublicKey(privateKey);
+      return publicKey.export({ format: 'ssh' }).toString();
+    },
+    () => {
+      const privateKey = sshpk.parsePrivateKey(normalizedContent, 'auto');
+      return privateKey.toPublic().toString('ssh');
+    },
+  ];
+
+  let lastError;
+  for (const attempt of attempts) {
+    try {
+      return attempt();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error('Unable to derive public key from provided private key');
 };
 
 app.use(express.json());
