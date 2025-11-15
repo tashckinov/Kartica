@@ -52,6 +52,8 @@ ensurePrismaClientIsGenerated();
 
 const { PrismaClient } = require('@prisma/client');
 
+require('../bot');
+
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
