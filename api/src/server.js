@@ -667,14 +667,14 @@ app.post('/auth/token', async (req, res) => {
           throw error;
         }
 
-        if (claimToken && identityRecord.claimTokenHash) {
-          if (!doesClaimTokenMatch(identityRecord.claimTokenHash, claimToken)) {
-            const error = new Error('Не удалось подтвердить токен владельца.');
-            error.statusCode = 403;
-            throw error;
+        if (identityRecord.claimTokenHash) {
+          if (claimToken) {
+            if (!doesClaimTokenMatch(identityRecord.claimTokenHash, claimToken)) {
+              updates.claimTokenHash = ensureClaimTokenHash();
+            }
+          } else {
+            updates.claimTokenHash = ensureClaimTokenHash();
           }
-        } else if (identityRecord.claimTokenHash) {
-          updates.claimTokenHash = ensureClaimTokenHash();
         }
 
         if (requestedDisplayName && requestedDisplayName !== identityRecord.displayName) {
