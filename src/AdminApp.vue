@@ -414,10 +414,23 @@ const adminUserLabel = computed(() => {
   if (!adminUser.value) {
     return '';
   }
+  const displayName =
+    adminUser.value.displayName ??
+    adminUser.value.name ??
+    adminUser.value.user?.displayName ??
+    adminUser.value.user?.name ??
+    '';
   const firstName = adminUser.value.first_name ?? adminUser.value.firstName ?? adminUser.value.user?.first_name ?? '';
   const lastName = adminUser.value.last_name ?? adminUser.value.lastName ?? adminUser.value.user?.last_name ?? '';
   const username = adminUser.value.username ?? adminUser.value.user?.username ?? '';
   const id = adminUser.value.id ?? adminUser.value.user?.id;
+  if (displayName && typeof displayName === 'string' && displayName.trim()) {
+    const trimmed = displayName.trim();
+    if (username) {
+      return `${trimmed} (@${username})`;
+    }
+    return trimmed;
+  }
   const parts = [firstName, lastName]
     .map((part) => (typeof part === 'string' ? part.trim() : ''))
     .filter(Boolean);
