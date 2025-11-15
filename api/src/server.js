@@ -1,259 +1,516 @@
+const path = require('path');
+const fs = require('fs');
+const { execSync } = require('child_process');
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
 const crypto = require('crypto');
-const sshpk = require('sshpk');
+
+const ensurePrismaClientIsGenerated = () => {
+  const apiRoot = path.join(__dirname, '..');
+  const schemaPath = path.join(apiRoot, 'prisma', 'schema.prisma');
+  const generatedSchemaPath = path.join(apiRoot, 'node_modules', '.prisma', 'client', 'schema.prisma');
+
+  let shouldRegenerate = false;
+
+  try {
+    const sourceStats = fs.statSync(schemaPath);
+    const generatedStats = fs.statSync(generatedSchemaPath);
+    if (sourceStats.mtimeMs > generatedStats.mtimeMs) {
+      shouldRegenerate = true;
+    }
+  } catch (error) {
+    shouldRegenerate = true;
+  }
+
+  if (!shouldRegenerate) {
+    try {
+      const generatedSchemaContents = fs.readFileSync(generatedSchemaPath, 'utf8');
+      if (!generatedSchemaContents.includes('claimTokenHash')) {
+        shouldRegenerate = true;
+      }
+    } catch (error) {
+      shouldRegenerate = true;
+    }
+  }
+
+  if (!shouldRegenerate) {
+    return;
+  }
+
+  try {
+    execSync('npx prisma generate', {
+      cwd: apiRoot,
+      stdio: 'ignore',
+      env: process.env,
+    });
+  } catch (error) {
+    console.error('Не удалось обновить Prisma Client. Запустите "npm run prisma:generate" вручную.', error);
+    throw error;
+  }
+};
+
+ensurePrismaClientIsGenerated();
+
+const { PrismaClient } = require('@prisma/client');
 
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
-const ADMIN_PUBLIC_KEY = (process.env.ADMIN_PUBLIC_KEY || '').trim();
-const SESSION_COOKIE_NAME = 'kartica_admin_session';
-const SESSION_TTL_MS = Math.max(parseInt(process.env.ADMIN_SESSION_TTL_MS, 10) || 1000 * 60 * 30, 1000 * 60 * 5);
-const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production';
-const COOKIE_SAME_SITE = process.env.ADMIN_COOKIE_SAME_SITE || 'Lax';
-const DEFAULT_ALLOWED_ORIGIN = process.env.ADMIN_ALLOWED_ORIGIN || 'http://localhost:5173';
-const ALLOWED_ORIGINS = (process.env.ADMIN_ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGIN)
-  .split(',')
+
+const ADMIN_TOKEN_SECRET = (process.env.ADMIN_TOKEN_SECRET || '').trim();
+const ADMIN_TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const ADMIN_TOKEN_HEADER = { alg: 'HS256', typ: 'JWT' };
+const ADMIN_ID_MAX_LENGTH = 128;
+const ADMIN_DISPLAY_NAME_MAX_LENGTH = 120;
+const ADMIN_USERNAME_MAX_LENGTH = 64;
+const ADMIN_NAME_PART_MAX_LENGTH = 60;
+const ADMIN_IDENTITY_SECRET_MAX_LENGTH = 512;
+const ADMIN_CLAIM_TOKEN_LENGTH_BYTES = 32;
+const ADMIN_TOKEN_VERIFICATION_ERROR = 'Не удалось подтвердить данные администратора.';
+
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+];
+const configuredAllowedOriginsRaw = [
+  process.env.ADMIN_ALLOWED_ORIGINS,
+  process.env.ADMIN_ALLOWED_ORIGIN,
+]
+  .filter((value) => typeof value === 'string' && value.trim())
+  .map((value) => value.trim())
+  .join(',');
+
+const STATIC_ALLOWED_ORIGINS = (configuredAllowedOriginsRaw
+  ? configuredAllowedOriginsRaw.split(',')
+  : DEFAULT_ALLOWED_ORIGINS)
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-const activeSessions = new Map();
+const hasExplicitAllowedOrigins = Boolean(configuredAllowedOriginsRaw);
 
-const normalizeSshPublicKey = (key) => {
-  if (!key || typeof key !== 'string') {
-    return '';
-  }
-  const trimmed = key.trim();
-  if (!trimmed) {
-    return '';
-  }
-  const [type, value] = trimmed.split(/\s+/);
-  if (!type || !value) {
-    return '';
-  }
-  return `${type} ${value}`;
-};
-
-const ADMIN_PUBLIC_KEY_NORMALIZED = normalizeSshPublicKey(ADMIN_PUBLIC_KEY);
-
-const derivePublicKeyFromPrivate = (privateKeyContent) => {
-  const normalizedContent = typeof privateKeyContent === 'string' ? privateKeyContent.trim() : privateKeyContent;
-  const attempts = [
-    () => {
-      const privateKey = crypto.createPrivateKey({ key: normalizedContent });
-      const publicKey = crypto.createPublicKey(privateKey);
-      return publicKey.export({ format: 'ssh' }).toString();
-    },
-    () => {
-      const privateKey = sshpk.parsePrivateKey(normalizedContent, 'auto');
-      return privateKey.toPublic().toString('ssh');
-    },
-  ];
-
-  let lastError;
-  for (const attempt of attempts) {
-    try {
-      return attempt();
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  throw lastError || new Error('Unable to derive public key from provided private key');
-};
+const ADMIN_GROUP_OWNERSHIP_ERROR = 'Можно изменять только созданные вами группы';
 
 app.use(express.json());
 
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  const allowedOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  const originHeader = req.headers.origin;
+  let allowedOrigin = '';
+
+  if (originHeader && STATIC_ALLOWED_ORIGINS.includes(originHeader)) {
+    allowedOrigin = originHeader;
+  } else if (originHeader && !hasExplicitAllowedOrigins) {
+    allowedOrigin = originHeader;
+  } else if (STATIC_ALLOWED_ORIGINS.length) {
+    [allowedOrigin] = STATIC_ALLOWED_ORIGINS;
+  }
 
   if (allowedOrigin) {
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   }
-  if (origin) {
-    res.setHeader('Vary', 'Origin');
+  if (originHeader) {
+    const existingVary = res.getHeader('Vary');
+    if (!existingVary) {
+      res.setHeader('Vary', 'Origin');
+    } else if (Array.isArray(existingVary)) {
+      if (!existingVary.includes('Origin')) {
+        res.setHeader('Vary', [...existingVary, 'Origin']);
+      }
+    } else if (typeof existingVary === 'string') {
+      const parts = existingVary.split(/,\s*/).filter(Boolean);
+      if (!parts.includes('Origin')) {
+        parts.push('Origin');
+        res.setHeader('Vary', parts.join(', '));
+      }
+    }
   }
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }
   return next();
 });
 
-function doesPrivateKeyMatchAdmin(privateKeyContent) {
-  if (!ADMIN_PUBLIC_KEY_NORMALIZED) {
-    console.warn('ADMIN_PUBLIC_KEY is not configured');
-    return false;
+const toBase64Url = (value) =>
+  Buffer.from(value)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+
+const fromBase64UrlToBuffer = (value) => {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padding = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
+  return Buffer.from(normalized + padding, 'base64');
+};
+
+const fromBase64Url = (value) => fromBase64UrlToBuffer(value).toString('utf-8');
+
+const sanitizeString = (value, maxLength) => {
+  if (value === undefined || value === null) {
+    return '';
   }
 
-  if (!privateKeyContent || typeof privateKeyContent !== 'string') {
-    return false;
+  const stringValue = typeof value === 'string' ? value : String(value);
+  const trimmed = stringValue.trim();
+
+  if (!trimmed) {
+    return '';
   }
 
-  const normalizedContent = privateKeyContent.trim();
-  if (!normalizedContent) {
+  if (typeof maxLength === 'number' && maxLength > 0 && trimmed.length > maxLength) {
+    return trimmed.slice(0, maxLength);
+  }
+
+  return trimmed;
+};
+
+const sanitizeSecretString = (value) => {
+  if (value === undefined || value === null) {
+    return '';
+  }
+
+  const stringValue = typeof value === 'string' ? value : String(value);
+  const trimmed = stringValue.trim();
+
+  if (!trimmed) {
+    return '';
+  }
+
+  if (trimmed.length > ADMIN_IDENTITY_SECRET_MAX_LENGTH) {
+    return trimmed.slice(0, ADMIN_IDENTITY_SECRET_MAX_LENGTH);
+  }
+
+  return trimmed;
+};
+
+const hashAdminIdentitySecret = (secret) =>
+  crypto.createHash('sha256').update(secret, 'utf8').digest('hex');
+
+const generateAdminClaimToken = () => crypto.randomBytes(ADMIN_CLAIM_TOKEN_LENGTH_BYTES).toString('hex');
+
+const hashAdminClaimToken = (token) => hashAdminIdentitySecret(token);
+
+const areSecretHashesEqual = (hashA, hashB) => {
+  if (!hashA || !hashB) {
     return false;
   }
 
   try {
-    const derivedPublicKey = normalizeSshPublicKey(derivePublicKeyFromPrivate(normalizedContent));
-    return derivedPublicKey === ADMIN_PUBLIC_KEY_NORMALIZED;
+    const bufferA = Buffer.from(hashA, 'hex');
+    const bufferB = Buffer.from(hashB, 'hex');
+
+    if (bufferA.length === 0 || bufferA.length !== bufferB.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(bufferA, bufferB);
   } catch (error) {
-    console.warn('Failed to derive admin public key from provided key', error);
-
-    const normalizedProvided = normalizeSshPublicKey(normalizedContent);
-    if (normalizedProvided && normalizedProvided === ADMIN_PUBLIC_KEY_NORMALIZED) {
-      return true;
-    }
-
-    try {
-      const publicKeyFromInput = crypto
-        .createPublicKey({ key: normalizedContent, format: 'ssh' })
-        .export({ format: 'ssh' })
-        .toString();
-      return normalizeSshPublicKey(publicKeyFromInput) === ADMIN_PUBLIC_KEY_NORMALIZED;
-    } catch (secondaryError) {
-      console.warn('Provided key does not match configured admin key', secondaryError);
-    }
-
     return false;
   }
-}
+};
 
-function setSessionCookie(res, token, ttlMs = SESSION_TTL_MS) {
-  const maxAgeSeconds = Math.max(Math.floor(ttlMs / 1000), 0);
-  const cookieParts = [
-    `${SESSION_COOKIE_NAME}=${token}`,
-    'Path=/',
-    'HttpOnly',
-    `Max-Age=${maxAgeSeconds}`,
-    `SameSite=${COOKIE_SAME_SITE}`,
-  ];
-  if (COOKIE_SECURE) {
-    cookieParts.push('Secure');
+const doesClaimTokenMatch = (storedHash, token) => {
+  if (!storedHash || !token) {
+    return false;
   }
-  res.setHeader('Set-Cookie', cookieParts.join('; '));
-}
 
-function clearSessionCookie(res) {
-  const cookieParts = [
-    `${SESSION_COOKIE_NAME}=`,
-    'Path=/',
-    'HttpOnly',
-    'Max-Age=0',
-    `SameSite=${COOKIE_SAME_SITE}`,
-  ];
-  if (COOKIE_SECURE) {
-    cookieParts.push('Secure');
+  const providedHash = hashAdminClaimToken(token);
+  return areSecretHashesEqual(storedHash, providedHash);
+};
+
+const normalizeAdminUser = (rawUser) => {
+  if (!rawUser || typeof rawUser !== 'object') {
+    return null;
   }
-  res.setHeader('Set-Cookie', cookieParts.join('; '));
+
+  const candidateId =
+    rawUser.id ??
+    rawUser.userId ??
+    rawUser.user_id ??
+    rawUser.user?.id ??
+    rawUser.sub ??
+    rawUser.uid;
+
+  const id = sanitizeString(candidateId, ADMIN_ID_MAX_LENGTH);
+
+  const firstName = sanitizeString(
+    rawUser.first_name ?? rawUser.firstName ?? rawUser.user?.first_name ?? '',
+    ADMIN_NAME_PART_MAX_LENGTH,
+  );
+  const lastName = sanitizeString(
+    rawUser.last_name ?? rawUser.lastName ?? rawUser.user?.last_name ?? '',
+    ADMIN_NAME_PART_MAX_LENGTH,
+  );
+  const username = sanitizeString(
+    rawUser.username ?? rawUser.user?.username ?? '',
+    ADMIN_USERNAME_MAX_LENGTH,
+  );
+  const explicitDisplayName = sanitizeString(
+    rawUser.displayName ??
+      rawUser.name ??
+      rawUser.fullName ??
+      rawUser.user?.displayName ??
+      rawUser.user?.name ??
+      '',
+    ADMIN_DISPLAY_NAME_MAX_LENGTH,
+  );
+
+  const normalized = {};
+
+  if (id) {
+    normalized.id = id;
+  }
+
+  if (explicitDisplayName) {
+    normalized.displayName = explicitDisplayName;
+  } else {
+    const nameParts = [firstName, lastName].filter(Boolean);
+    if (nameParts.length) {
+      normalized.displayName = sanitizeString(nameParts.join(' '), ADMIN_DISPLAY_NAME_MAX_LENGTH);
+    }
+  }
+
+  if (firstName) {
+    normalized.firstName = firstName;
+  }
+
+  if (lastName) {
+    normalized.lastName = lastName;
+  }
+
+  if (username) {
+    normalized.username = username;
+  }
+
+  return Object.keys(normalized).length ? normalized : null;
+};
+
+const buildAdminUserFromRequest = (body) => {
+  const raw = typeof body === 'object' && body !== null ? body : {};
+
+  const userId =
+    sanitizeString(raw.userId, ADMIN_ID_MAX_LENGTH) ||
+    sanitizeString(raw.user_id, ADMIN_ID_MAX_LENGTH) ||
+    sanitizeString(raw.id, ADMIN_ID_MAX_LENGTH);
+
+  if (!userId) {
+    const error = new Error('Не передан идентификатор пользователя.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const profileRaw =
+    typeof raw.profile === 'object' && raw.profile !== null ? raw.profile : {};
+
+  const user = { id: userId };
+
+  const displayName =
+    sanitizeString(raw.displayName, ADMIN_DISPLAY_NAME_MAX_LENGTH) ||
+    sanitizeString(profileRaw.displayName, ADMIN_DISPLAY_NAME_MAX_LENGTH) ||
+    sanitizeString(profileRaw.name, ADMIN_DISPLAY_NAME_MAX_LENGTH);
+
+  if (displayName) {
+    user.displayName = displayName;
+  }
+
+  const username =
+    sanitizeString(raw.username, ADMIN_USERNAME_MAX_LENGTH) ||
+    sanitizeString(profileRaw.username, ADMIN_USERNAME_MAX_LENGTH);
+
+  if (username) {
+    user.username = username;
+  }
+
+  const firstName = sanitizeString(
+    profileRaw.firstName ?? profileRaw.first_name,
+    ADMIN_NAME_PART_MAX_LENGTH,
+  );
+  if (firstName) {
+    user.firstName = firstName;
+  }
+
+  const lastName = sanitizeString(
+    profileRaw.lastName ?? profileRaw.last_name,
+    ADMIN_NAME_PART_MAX_LENGTH,
+  );
+  if (lastName) {
+    user.lastName = lastName;
+  }
+
+  return user;
+};
+
+const generateAdminToken = (user) => {
+  if (!ADMIN_TOKEN_SECRET) {
+    throw new Error('ADMIN_TOKEN_SECRET не настроен на сервере');
+  }
+
+  const normalizedUser = normalizeAdminUser(user);
+  const fallbackId = sanitizeString(user?.id, ADMIN_ID_MAX_LENGTH);
+  const subject = normalizedUser?.id || fallbackId;
+
+  if (!subject) {
+    throw new Error('Не удалось определить пользователя администратора');
+  }
+
+  const issuedAtSeconds = Math.floor(Date.now() / 1000);
+  const expiresAtSeconds = issuedAtSeconds + Math.floor(ADMIN_TOKEN_TTL_MS / 1000);
+
+  const payload = {
+    sub: subject,
+    iat: issuedAtSeconds,
+    exp: expiresAtSeconds,
+    iss: 'kartica-admin',
+    user: normalizedUser || { id: subject },
+  };
+
+  const encodedHeader = toBase64Url(JSON.stringify(ADMIN_TOKEN_HEADER));
+  const encodedPayload = toBase64Url(JSON.stringify(payload));
+  const data = `${encodedHeader}.${encodedPayload}`;
+  const signature = crypto
+    .createHmac('sha256', ADMIN_TOKEN_SECRET)
+    .update(data)
+    .digest();
+  const encodedSignature = toBase64Url(signature);
+
+  return {
+    token: `${data}.${encodedSignature}`,
+    expiresAt: expiresAtSeconds * 1000,
+  };
+};
+
+const verifyAdminToken = (token) => {
+  if (!token || typeof token !== 'string') {
+    throw new Error('Токен администратора не передан');
+  }
+  if (!ADMIN_TOKEN_SECRET) {
+    throw new Error('ADMIN_TOKEN_SECRET не настроен на сервере');
+  }
+
+  const parts = token.split('.');
+  if (parts.length !== 3) {
+    throw new Error('Неверный формат токена администратора');
+  }
+
+  const [encodedHeader, encodedPayload, signaturePart] = parts;
+  const data = `${encodedHeader}.${encodedPayload}`;
+  const expectedSignature = crypto
+    .createHmac('sha256', ADMIN_TOKEN_SECRET)
+    .update(data)
+    .digest();
+
+  let providedSignature;
+  try {
+    providedSignature = fromBase64UrlToBuffer(signaturePart);
+  } catch (error) {
+    throw new Error('Неверный формат подписи токена администратора');
+  }
+
+  if (
+    expectedSignature.length !== providedSignature.length ||
+    !crypto.timingSafeEqual(expectedSignature, providedSignature)
+  ) {
+    throw new Error('Не удалось подтвердить токен администратора');
+  }
+
+  let header;
+  let payload;
+  try {
+    header = JSON.parse(fromBase64Url(encodedHeader));
+    payload = JSON.parse(fromBase64Url(encodedPayload));
+  } catch (error) {
+    throw new Error('Не удалось разобрать токен администратора');
+  }
+
+  if (!header || header.alg !== 'HS256') {
+    throw new Error('Неподдерживаемый алгоритм подписи токена администратора');
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Неверная структура токена администратора');
+  }
+
+  if (!payload.sub) {
+    throw new Error('Токен администратора не содержит идентификатор пользователя');
+  }
+
+  if (payload.exp && Number.isFinite(payload.exp)) {
+    const expiresAtMs = Number(payload.exp) * 1000;
+    if (expiresAtMs < Date.now()) {
+      throw new Error('Токен администратора истёк');
+    }
+  }
+
+  return payload;
+};
+
+const getAdminTokenFromRequest = (req) => {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+  if (typeof req.headers['x-admin-token'] === 'string') {
+    return req.headers['x-admin-token'].trim();
+  }
+  return '';
+};
+
+function requireAdmin(req, res, next) {
+  let payload;
+  try {
+    const token = getAdminTokenFromRequest(req);
+    payload = verifyAdminToken(token);
+    req.adminToken = token;
+  } catch (error) {
+    return res.status(401).json({ error: error.message || 'Unauthorized' });
+  }
+
+  const normalizedUser = normalizeAdminUser(payload.user);
+  const adminUserId =
+    normalizedUser?.id || sanitizeString(payload.sub, ADMIN_ID_MAX_LENGTH);
+
+  if (!adminUserId) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  req.adminUser = normalizedUser ? { ...normalizedUser, id: adminUserId } : { id: adminUserId };
+  req.adminUserId = adminUserId;
+  req.adminTokenExpiresAt = payload.exp ? Number(payload.exp) * 1000 : null;
+
+  return next();
 }
 
-function getSessionTokenFromRequest(req) {
-  const cookieHeader = req.headers.cookie;
-  if (!cookieHeader) {
+function getAdminUserId(req) {
+  if (!req || typeof req !== 'object') {
     return '';
   }
-
-  const cookies = cookieHeader.split(';').map((chunk) => chunk.trim());
-  for (const cookie of cookies) {
-    if (!cookie) continue;
-    const [name, value] = cookie.split('=');
-    if (name === SESSION_COOKIE_NAME) {
-      return value || '';
-    }
+  if (typeof req.adminUserId === 'string' && req.adminUserId.trim()) {
+    return req.adminUserId.trim();
   }
   return '';
 }
 
-function getActiveSession(token) {
-  if (!token) {
-    return null;
-  }
-  const session = activeSessions.get(token);
-  if (!session) {
-    return null;
-  }
-  if (session.expiresAt <= Date.now()) {
-    activeSessions.delete(token);
-    return null;
-  }
-  return session;
-}
-
-function requireAdmin(req, res, next) {
-  const token = getSessionTokenFromRequest(req);
-  const session = getActiveSession(token);
-  if (!session) {
-    clearSessionCookie(res);
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  session.expiresAt = Date.now() + SESSION_TTL_MS;
-  setSessionCookie(res, token, SESSION_TTL_MS);
-  req.adminSessionToken = token;
-  return next();
-}
-
-app.post('/auth/login', (req, res) => {
-  const privateKeyContent = req.body?.key;
-
-  if (!privateKeyContent || typeof privateKeyContent !== 'string' || !privateKeyContent.trim()) {
-    return res.status(400).json({ error: 'Приватный ключ не передан' });
-  }
-
-  if (!doesPrivateKeyMatchAdmin(privateKeyContent)) {
-    return res.status(401).json({ error: 'Предоставленный ключ не подходит для входа' });
-  }
-
-  const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = Date.now() + SESSION_TTL_MS;
-
-  activeSessions.set(token, { expiresAt });
-  setSessionCookie(res, token, SESSION_TTL_MS);
-
-  return res.json({ status: 'ok', expiresAt });
-});
-
-app.post('/auth/logout', (req, res) => {
-  const token = getSessionTokenFromRequest(req);
-  if (token) {
-    activeSessions.delete(token);
-  }
-  clearSessionCookie(res);
-  return res.status(204).send();
-});
-
-app.get('/auth/verify', requireAdmin, (req, res) => {
-  const token = req.adminSessionToken;
-  const session = getActiveSession(token);
-  res.json({ status: 'ok', expiresAt: session?.expiresAt });
-});
-
-function parsePagination(query) {
+const parsePagination = (query = {}) => {
   const page = Math.max(parseInt(query.page, 10) || 1, 1);
-  const pageSize = Math.max(Math.min(parseInt(query.pageSize, 10) || 10, 200), 1);
+  const pageSize = Math.min(Math.max(parseInt(query.pageSize, 10) || 20, 1), 200);
   const skip = (page - 1) * pageSize;
   return { page, pageSize, skip };
-}
+};
 
-function serializeGroupSummary(group) {
-  return {
-    id: group.id,
-    title: group.title,
-    description: group.description,
-    createdAt: group.createdAt,
-    updatedAt: group.updatedAt,
-    cardsCount: group._count?.cards ?? group.cardsCount ?? 0,
-  };
-}
+const serializeGroupSummary = (group) => ({
+  id: group.id,
+  title: group.title,
+  description: group.description,
+  createdAt: group.createdAt,
+  updatedAt: group.updatedAt,
+  cardsCount: group._count?.cards ?? 0,
+  ownerId: group.ownerId ?? null,
+});
 
-function normalizeCardPayload(card, index) {
+const normalizeCardPayload = (card, index) => {
   if (!card || typeof card !== 'object') {
-    const error = new Error(`Card at position ${index + 1} is invalid`);
+    const error = new Error(`Card at position ${index + 1} is not an object`);
     error.statusCode = 400;
     throw error;
   }
@@ -282,6 +539,27 @@ function normalizeCardPayload(card, index) {
     example: example || null,
     image: image || null,
   };
+};
+
+async function ensureGroupOwnedByUser(groupId, userId) {
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { id: true, ownerId: true },
+  });
+
+  if (!group) {
+    const error = new Error('Group not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (!userId || group.ownerId !== userId) {
+    const error = new Error(ADMIN_GROUP_OWNERSHIP_ERROR);
+    error.statusCode = 403;
+    throw error;
+  }
+
+  return group;
 }
 
 async function replaceGroupCards(groupId, cardsPayload) {
@@ -307,13 +585,206 @@ async function replaceGroupCards(groupId, cardsPayload) {
   });
 }
 
+app.post('/auth/token', async (req, res) => {
+  try {
+    const userInput = buildAdminUserFromRequest(req.body);
+    const secret = sanitizeSecretString(req.body?.secret);
+    const claimToken = sanitizeSecretString(req.body?.claimToken);
+
+    if (!secret) {
+      const error = new Error('Не передан секрет администратора.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const secretHash = hashAdminIdentitySecret(secret);
+    const requestedDisplayName = userInput.displayName
+      ? sanitizeString(userInput.displayName, ADMIN_DISPLAY_NAME_MAX_LENGTH)
+      : '';
+
+    let identityRecord = await prisma.adminIdentity.findUnique({
+      where: { id: userInput.id },
+    });
+
+    let generatedClaimToken = '';
+
+    const ensureClaimTokenHash = () => {
+      if (!generatedClaimToken) {
+        generatedClaimToken = generateAdminClaimToken();
+      }
+      return hashAdminClaimToken(generatedClaimToken);
+    };
+
+    if (!identityRecord) {
+      const existingGroups = await prisma.group.count({ where: { ownerId: userInput.id } });
+      if (existingGroups > 0) {
+        const error = new Error(
+          claimToken
+            ? 'Не удалось подтвердить токен владельца.'
+            : 'Для доступа к уже созданной группе нужен токен подтверждения владельца.',
+        );
+        error.statusCode = 403;
+        throw error;
+      }
+
+      const claimTokenHash = ensureClaimTokenHash();
+
+      identityRecord = await prisma.adminIdentity.create({
+        data: {
+          id: userInput.id,
+          secretHash,
+          claimTokenHash,
+          displayName: requestedDisplayName || null,
+        },
+      });
+    } else {
+      const updates = {};
+
+      if (!identityRecord.claimTokenHash) {
+        updates.claimTokenHash = ensureClaimTokenHash();
+      }
+
+      if (!identityRecord.secretHash) {
+        if (!claimToken) {
+          const error = new Error('Укажите токен владельца, чтобы подтвердить доступ.');
+          error.statusCode = 403;
+          throw error;
+        }
+        if (!doesClaimTokenMatch(identityRecord.claimTokenHash, claimToken)) {
+          const error = new Error('Не удалось подтвердить токен владельца.');
+          error.statusCode = 403;
+          throw error;
+        }
+
+        updates.secretHash = secretHash;
+        if (requestedDisplayName) {
+          updates.displayName = requestedDisplayName;
+        }
+      } else {
+        if (!areSecretHashesEqual(identityRecord.secretHash, secretHash)) {
+          const error = new Error(ADMIN_TOKEN_VERIFICATION_ERROR);
+          error.statusCode = 403;
+          throw error;
+        }
+
+        if (identityRecord.claimTokenHash) {
+          if (claimToken) {
+            if (!doesClaimTokenMatch(identityRecord.claimTokenHash, claimToken)) {
+              updates.claimTokenHash = ensureClaimTokenHash();
+            }
+          } else {
+            updates.claimTokenHash = ensureClaimTokenHash();
+          }
+        }
+
+        if (requestedDisplayName && requestedDisplayName !== identityRecord.displayName) {
+          updates.displayName = requestedDisplayName;
+        }
+      }
+
+      if (Object.keys(updates).length > 0) {
+        identityRecord = await prisma.adminIdentity.update({
+          where: { id: identityRecord.id },
+          data: updates,
+        });
+      }
+    }
+
+    const tokenUser = {
+      id: identityRecord.id,
+      displayName:
+        requestedDisplayName || identityRecord.displayName || userInput.displayName || undefined,
+      firstName: userInput.firstName,
+      lastName: userInput.lastName,
+      username: userInput.username,
+    };
+
+    const normalizedUser = normalizeAdminUser(tokenUser) || { id: identityRecord.id };
+
+    if (!normalizedUser.displayName && identityRecord.displayName) {
+      normalizedUser.displayName = identityRecord.displayName;
+    }
+
+    const { token, expiresAt } = generateAdminToken(normalizedUser);
+
+    const responsePayload = { token, expiresAt, user: normalizedUser };
+    if (generatedClaimToken) {
+      responsePayload.claimToken = generatedClaimToken;
+    }
+
+    return res.json(responsePayload);
+  } catch (error) {
+    console.warn('Failed to issue admin token', error);
+    const statusCode =
+      Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode < 600
+        ? error.statusCode
+        : 400;
+    return res
+      .status(statusCode)
+      .json({ error: error?.message || 'Не удалось выдать токен администратора' });
+  }
+});
+
+app.get('/auth/session', requireAdmin, (req, res) => {
+  res.json({
+    user: req.adminUser,
+    expiresAt: req.adminTokenExpiresAt,
+  });
+});
+
+app.post('/auth/logout', (req, res) => {
+  res.status(204).send();
+});
+
+app.post('/auth/claim-token', requireAdmin, async (req, res) => {
+  try {
+    const claimToken = generateAdminClaimToken();
+    const claimTokenHash = hashAdminClaimToken(claimToken);
+
+    await prisma.adminIdentity.upsert({
+      where: { id: req.adminUserId },
+      update: { claimTokenHash },
+      create: {
+        id: req.adminUserId,
+        secretHash: null,
+        claimTokenHash,
+        displayName: null,
+      },
+    });
+
+    res.json({ claimToken });
+  } catch (error) {
+    console.error('Failed to rotate admin claim token', error);
+    res.status(500).json({ error: 'Не удалось обновить токен владельца' });
+  }
+});
+
 app.get('/groups', async (req, res) => {
+  let adminUserId = '';
+
+  const candidateToken = getAdminTokenFromRequest(req);
+  if (candidateToken) {
+    try {
+      const payload = verifyAdminToken(candidateToken);
+      const normalizedUser = normalizeAdminUser(payload.user);
+      adminUserId =
+        normalizedUser?.id || sanitizeString(payload.sub, ADMIN_ID_MAX_LENGTH) || '';
+      if (!adminUserId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+    } catch (error) {
+      return res.status(401).json({ error: error?.message || 'Unauthorized' });
+    }
+  }
+
   try {
     const { page, pageSize, skip } = parsePagination(req.query);
+    const whereClause = adminUserId ? { ownerId: adminUserId } : {};
 
     const [total, groups] = await Promise.all([
-      prisma.group.count(),
+      prisma.group.count({ where: whereClause }),
       prisma.group.findMany({
+        where: whereClause,
         skip,
         take: pageSize,
         orderBy: { id: 'asc' },
@@ -337,6 +808,22 @@ app.get('/groups', async (req, res) => {
 });
 
 app.get('/groups/:id', async (req, res) => {
+  let adminUserId = '';
+  const candidateToken = getAdminTokenFromRequest(req);
+  if (candidateToken) {
+    try {
+      const payload = verifyAdminToken(candidateToken);
+      const normalizedUser = normalizeAdminUser(payload.user);
+      adminUserId =
+        normalizedUser?.id || sanitizeString(payload.sub, ADMIN_ID_MAX_LENGTH) || '';
+      if (!adminUserId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+    } catch (error) {
+      return res.status(401).json({ error: error?.message || 'Unauthorized' });
+    }
+  }
+
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
@@ -354,6 +841,13 @@ app.get('/groups/:id', async (req, res) => {
 
     if (!group) {
       return res.status(404).json({ error: 'Group not found' });
+    }
+
+    if (adminUserId) {
+      const ownerId = group.ownerId ? String(group.ownerId).trim() : '';
+      if (!ownerId || ownerId !== adminUserId) {
+        return res.status(403).json({ error: 'Недостаточно прав для просмотра группы' });
+      }
     }
 
     res.json(group);
@@ -427,9 +921,14 @@ app.post('/groups', requireAdmin, async (req, res) => {
   try {
     const title = String(req.body?.title ?? '').trim();
     const descriptionRaw = req.body?.description;
+    const ownerId = getAdminUserId(req);
 
     if (!title) {
       return res.status(400).json({ error: 'Group title is required' });
+    }
+
+    if (!ownerId) {
+      return res.status(403).json({ error: 'Не удалось определить владельца группы' });
     }
 
     const group = await prisma.group.create({
@@ -439,6 +938,7 @@ app.post('/groups', requireAdmin, async (req, res) => {
           descriptionRaw === null || descriptionRaw === undefined
             ? null
             : String(descriptionRaw).trim() || null,
+        ownerId,
       },
       include: {
         _count: { select: { cards: true } },
@@ -458,6 +958,9 @@ app.put('/groups/:id', requireAdmin, async (req, res) => {
     if (Number.isNaN(id)) {
       return res.status(400).json({ error: 'Invalid group id' });
     }
+
+    const ownerId = getAdminUserId(req);
+    await ensureGroupOwnedByUser(id, ownerId);
 
     const titleRaw = req.body?.title;
     const descriptionRaw = req.body?.description;
@@ -485,7 +988,10 @@ app.put('/groups/:id', requireAdmin, async (req, res) => {
 
     res.json(serializeGroupSummary(updated));
   } catch (error) {
-    if (error.code === 'P2025') {
+    if (error.statusCode === 403) {
+      return res.status(403).json({ error: error.message });
+    }
+    if (error.code === 'P2025' || error.statusCode === 404) {
       return res.status(404).json({ error: 'Group not found' });
     }
     console.error('Failed to update group', error);
@@ -505,10 +1011,8 @@ app.put('/groups/:id/cards', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Cards payload must be an array' });
     }
 
-    const group = await prisma.group.findUnique({ where: { id } });
-    if (!group) {
-      return res.status(404).json({ error: 'Group not found' });
-    }
+    const ownerId = getAdminUserId(req);
+    await ensureGroupOwnedByUser(id, ownerId);
 
     const updatedGroup = await replaceGroupCards(id, cardsPayload);
 
@@ -529,11 +1033,17 @@ app.delete('/groups/:id', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Invalid group id' });
     }
 
+    const ownerId = getAdminUserId(req);
+    await ensureGroupOwnedByUser(id, ownerId);
+
     await prisma.group.delete({ where: { id } });
 
     res.status(204).send();
   } catch (error) {
-    if (error.code === 'P2025') {
+    if (error.statusCode === 403) {
+      return res.status(403).json({ error: error.message });
+    }
+    if (error.code === 'P2025' || error.statusCode === 404) {
       return res.status(404).json({ error: 'Group not found' });
     }
     console.error('Failed to delete group', error);

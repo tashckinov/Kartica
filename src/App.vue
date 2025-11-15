@@ -5,16 +5,54 @@
         <div class="profile-screen">
           <div class="profile-card">
             <h2>Профиль</h2>
-            <div v-if="isProfileReady" class="profile-user" data-telegram-user>
-              <div class="profile-user-info">
-                <span class="profile-user-name">{{ profileDisplayName }}</span>
-                <span v-if="showProfileUsername" class="profile-user-username">@{{ userProfile.username }}</span>
-                <span v-if="userProfile.languageCode" class="profile-user-language">
-                  Язык интерфейса: {{ userProfile.languageCode.toUpperCase() }}
-                </span>
-              </div>
+            <div class="profile-user" data-admin-identity>
+              <label class="profile-field">
+                <span>Отображаемое имя</span>
+                <input
+                  v-model="adminDisplayNameModel"
+                  type="text"
+                  placeholder="Автор карточек"
+                  autocomplete="name"
+                />
+              </label>
             </div>
-            <p v-else class="profile-placeholder">{{ profileFallbackText }}</p>
+          </div>
+          <div class="profile-card profile-admin">
+            <h3>Создание контента</h3>
+            <p class="profile-admin-description">
+              Получите специальную ссылку с токеном доступа и откройте панель управления в любом браузере.
+            </p>
+            <div class="profile-admin-actions">
+              <button
+                class="profile-admin-button"
+                type="button"
+                @click="requestAdminLink"
+                :disabled="adminLink.loading || !canRequestAdminLink"
+              >
+                {{ adminLink.loading ? 'Получаем ссылку…' : 'Перейти к созданию' }}
+              </button>
+              <button
+                v-if="hasAdminLink"
+                class="profile-admin-copy"
+                type="button"
+                @click="copyAdminLink"
+              >
+                {{ adminLink.copied ? 'Скопировано!' : 'Скопировать ссылку' }}
+              </button>
+            </div>
+            <p v-if="adminLink.error" class="profile-admin-error">{{ adminLink.error }}</p>
+            <p v-else-if="!adminIdentity.claimToken" class="profile-admin-warning">
+              Откройте панель администратора с актуальным токеном, чтобы синхронизировать токен владельца и получить
+              новую ссылку.
+            </p>
+            <div v-if="hasAdminLink" class="profile-admin-link">
+              <input type="text" :value="adminLink.url" readonly />
+              <a :href="adminLink.url" target="_blank" rel="noopener" class="profile-admin-open">Открыть панель</a>
+            </div>
+            <p v-if="hasAdminLink" class="profile-admin-hint">
+              После перехода токен сохранится в браузере и будет действовать 12 часов. Затем запросите новую ссылку
+              из этого раздела.
+            </p>
           </div>
           <div class="profile-card profile-favorites">
             <h3>Избранные темы</h3>
@@ -882,22 +920,67 @@ const toggleFavorite = async (topicId, options = {}) => {
   }
 };
 
-const userProfile = reactive({
-  id: null,
-  username: '',
-  firstName: '',
-  lastName: '',
-  languageCode: ''
-});
-const isTelegramEnvironment = ref(false);
+const ADMIN_IDENTITY_STORAGE_KEY = 'kartica-admin-identity';
+const ADMIN_IDENTITY_ID_MAX_LENGTH = 128;
+const ADMIN_IDENTITY_NAME_MAX_LENGTH = 120;
+const ADMIN_IDENTITY_SECRET_MAX_LENGTH = 512;
+const ADMIN_IDENTITY_SECRET_LENGTH_BYTES = 32;
 
-const setUserProfile = (user = {}) => {
-  userProfile.id = user.id ?? null;
-  userProfile.username = user.username ?? '';
-  userProfile.firstName = user.first_name ?? user.firstName ?? '';
-  userProfile.lastName = user.last_name ?? user.lastName ?? '';
-  userProfile.languageCode = user.language_code ?? user.languageCode ?? '';
+const sanitizeIdentityString = (value, maxLength = ADMIN_IDENTITY_NAME_MAX_LENGTH) => {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  const stringValue = typeof value === 'string' ? value : String(value);
+  const trimmed = stringValue.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (typeof maxLength === 'number' && maxLength > 0 && trimmed.length > maxLength) {
+    return trimmed.slice(0, maxLength);
+  }
+  return trimmed;
 };
+
+const sanitizeIdentitySecret = (value) => {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  const stringValue = typeof value === 'string' ? value : String(value);
+  const trimmed = stringValue.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (trimmed.length > ADMIN_IDENTITY_SECRET_MAX_LENGTH) {
+    return trimmed.slice(0, ADMIN_IDENTITY_SECRET_MAX_LENGTH);
+  }
+  return trimmed;
+};
+
+const generateIdentitySecret = () => {
+  try {
+    if (window.crypto?.getRandomValues) {
+      const bytes = new Uint8Array(ADMIN_IDENTITY_SECRET_LENGTH_BYTES);
+      window.crypto.getRandomValues(bytes);
+      return Array.from(bytes)
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+    }
+  } catch (error) {
+    console.warn('Не удалось сгенерировать секрет администратора', error);
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random()
+    .toString(36)
+    .slice(2)}`;
+};
+
+const adminIdentity = reactive({
+  id: '',
+  displayName: '',
+  secret: '',
+  claimToken: '',
+});
+
+const adminIdentityInitialized = ref(false);
 
 const parseTelegramUserFromInitData = (initData) => {
   if (!initData || typeof initData !== 'string') {
@@ -916,62 +999,138 @@ const parseTelegramUserFromInitData = (initData) => {
   }
 };
 
-const initTelegramIntegration = () => {
+const detectTelegramUser = () => {
   const webApp = window.Telegram?.WebApp;
-  let initData = '';
-  let telegramUser = null;
+  let telegramUser = webApp?.initDataUnsafe?.user || null;
 
-  if (webApp) {
-    isTelegramEnvironment.value = true;
-    initData = webApp.initData || '';
-    telegramUser = webApp.initDataUnsafe?.user || null;
-  }
-
-  if (!telegramUser && !initData) {
+  if (!telegramUser) {
     const params = new URLSearchParams(window.location.search);
-    initData = params.get('tgWebAppInitData') || params.get('initData') || '';
+    const initData = params.get('tgWebAppInitData') || params.get('initData') || '';
     if (initData) {
-      isTelegramEnvironment.value = true;
+      telegramUser = parseTelegramUserFromInitData(initData) || null;
     }
   }
 
-  if (!telegramUser) {
-    telegramUser = parseTelegramUserFromInitData(initData) || null;
-  }
+  return telegramUser;
+};
 
-  if (telegramUser) {
-    setUserProfile(telegramUser);
+const generateIdentityId = (telegramUser) => {
+  if (telegramUser && telegramUser.id !== undefined && telegramUser.id !== null) {
+    return sanitizeIdentityString(String(telegramUser.id), ADMIN_IDENTITY_ID_MAX_LENGTH);
+  }
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  const randomPart = Math.random().toString(36).slice(2, 10);
+  return `user-${randomPart}${Date.now().toString(36)}`;
+};
+
+const loadStoredIdentity = () => {
+  try {
+    const raw = localStorage.getItem(ADMIN_IDENTITY_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    const id = sanitizeIdentityString(parsed?.id, ADMIN_IDENTITY_ID_MAX_LENGTH);
+    if (!id) {
+      return null;
+    }
+    return {
+      id,
+      displayName: sanitizeIdentityString(parsed?.displayName, ADMIN_IDENTITY_NAME_MAX_LENGTH),
+      secret: sanitizeIdentitySecret(parsed?.secret),
+      claimToken: sanitizeIdentitySecret(parsed?.claimToken),
+    };
+  } catch (error) {
+    console.warn('Не удалось загрузить идентификатор администратора', error);
+    return null;
   }
 };
 
-const profileNameParts = computed(() =>
-  [userProfile.firstName, userProfile.lastName]
-    .map((part) => (typeof part === 'string' ? part.trim() : ''))
-    .filter(Boolean)
-);
+const persistAdminIdentity = () => {
+  if (!adminIdentityInitialized.value || !adminIdentity.id) {
+    return;
+  }
+  try {
+    const payload = {
+      id: sanitizeIdentityString(adminIdentity.id, ADMIN_IDENTITY_ID_MAX_LENGTH),
+      displayName: sanitizeIdentityString(adminIdentity.displayName, ADMIN_IDENTITY_NAME_MAX_LENGTH),
+      secret: sanitizeIdentitySecret(adminIdentity.secret),
+      claimToken: sanitizeIdentitySecret(adminIdentity.claimToken),
+    };
+    localStorage.setItem(ADMIN_IDENTITY_STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.warn('Не удалось сохранить идентификатор администратора', error);
+  }
+};
 
-const profileDisplayName = computed(() => {
-  if (profileNameParts.value.length) {
-    return profileNameParts.value.join(' ');
+const setAdminIdentity = (identity) => {
+  adminIdentity.id = sanitizeIdentityString(identity?.id, ADMIN_IDENTITY_ID_MAX_LENGTH) || '';
+  adminIdentity.displayName =
+    sanitizeIdentityString(identity?.displayName, ADMIN_IDENTITY_NAME_MAX_LENGTH) || '';
+  adminIdentity.secret = sanitizeIdentitySecret(identity?.secret);
+  adminIdentity.claimToken = sanitizeIdentitySecret(identity?.claimToken);
+};
+
+const initializeAdminIdentity = () => {
+  const storedIdentity = loadStoredIdentity();
+  if (storedIdentity) {
+    setAdminIdentity(storedIdentity);
+    if (!adminIdentity.secret) {
+      adminIdentity.secret = generateIdentitySecret();
+      persistAdminIdentity();
+    }
+    adminIdentityInitialized.value = true;
+    return;
   }
-  if (userProfile.username) {
-    return `@${userProfile.username}`;
-  }
-  return '';
+
+  const telegramUser = detectTelegramUser();
+  const generatedId = generateIdentityId(telegramUser);
+  const nameParts = [
+    sanitizeIdentityString(telegramUser?.first_name ?? telegramUser?.firstName, 60),
+    sanitizeIdentityString(telegramUser?.last_name ?? telegramUser?.lastName, 60),
+  ].filter(Boolean);
+  const username = sanitizeIdentityString(telegramUser?.username, ADMIN_IDENTITY_NAME_MAX_LENGTH);
+  const fallbackName = nameParts.length
+    ? sanitizeIdentityString(nameParts.join(' '), ADMIN_IDENTITY_NAME_MAX_LENGTH)
+    : username
+    ? `@${username}`
+    : '';
+
+  setAdminIdentity({ id: generatedId, displayName: fallbackName, secret: generateIdentitySecret() });
+  adminIdentityInitialized.value = true;
+  persistAdminIdentity();
+};
+
+const adminDisplayNameModel = computed({
+  get: () => adminIdentity.displayName,
+  set: (value) => {
+    adminIdentity.displayName = sanitizeIdentityString(value, ADMIN_IDENTITY_NAME_MAX_LENGTH);
+    persistAdminIdentity();
+  },
 });
 
-const isProfileReady = computed(() => Boolean(profileDisplayName.value));
-
-const showProfileUsername = computed(
-  () => profileNameParts.value.length > 0 && Boolean(userProfile.username)
-);
-
-const profileFallbackText = computed(() => {
-  if (!isTelegramEnvironment.value) {
-    return 'Откройте приложение в Telegram Mini App, чтобы увидеть информацию профиля.';
+const handleIdentityStorageEvent = (event) => {
+  if (event && event.key !== ADMIN_IDENTITY_STORAGE_KEY) {
+    return;
   }
-  return 'Telegram не передал данные пользователя.';
+  const storedIdentity = loadStoredIdentity();
+  if (storedIdentity) {
+    setAdminIdentity(storedIdentity);
+    adminIdentityInitialized.value = true;
+  }
+};
+
+const adminLink = reactive({
+  url: '',
+  loading: false,
+  error: '',
+  copied: false,
 });
+
+const canRequestAdminLink = computed(() => Boolean(adminIdentity.id && adminIdentity.secret));
+const hasAdminLink = computed(() => Boolean(adminLink.url));
 
 const buildApiUrl = (path, params = {}) => {
   const url = new URL(path, `${apiBaseUrl}/`);
@@ -981,6 +1140,102 @@ const buildApiUrl = (path, params = {}) => {
     }
   });
   return url.toString();
+};
+
+const readApiErrorMessage = async (response, fallbackMessage) => {
+  try {
+    const data = await response.json();
+    if (data && typeof data === 'object' && typeof data.error === 'string') {
+      const trimmed = data.error.trim();
+      if (trimmed) {
+        return trimmed;
+      }
+    }
+  } catch (error) {
+    // ignore JSON parsing issues
+  }
+  return fallbackMessage;
+};
+
+const requestAdminLink = async () => {
+  if (adminLink.loading) {
+    return;
+  }
+  adminLink.loading = true;
+  adminLink.error = '';
+  adminLink.copied = false;
+  try {
+    if (!adminIdentity.id) {
+      throw new Error('Не удалось определить идентификатор пользователя. Обновите страницу.');
+    }
+
+    persistAdminIdentity();
+
+    const profilePayload = {};
+    if (adminIdentity.displayName) {
+      profilePayload.displayName = adminIdentity.displayName;
+    }
+
+    const response = await fetch(buildApiUrl('/auth/token'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: adminIdentity.id,
+        secret: adminIdentity.secret,
+        claimToken: adminIdentity.claimToken,
+        profile: profilePayload,
+      }),
+    });
+
+    if (!response.ok) {
+      const message = await readApiErrorMessage(response, 'Не удалось получить токен доступа.');
+      throw new Error(message);
+    }
+
+    const data = await response.json();
+    if (!data || typeof data.token !== 'string' || !data.token.trim()) {
+      throw new Error('Сервер не вернул токен доступа.');
+    }
+
+    if (typeof data.claimToken === 'string' && data.claimToken.trim()) {
+      adminIdentity.claimToken = sanitizeIdentitySecret(data.claimToken);
+      persistAdminIdentity();
+    }
+
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const baseUrl = origin ? origin.replace(/\/$/, '') : '';
+    adminLink.url = `${baseUrl}/admin?token=${encodeURIComponent(data.token)}`;
+  } catch (error) {
+    console.error('Failed to request admin token link', error);
+    adminLink.url = '';
+    adminLink.error =
+      error instanceof Error && error.message
+        ? error.message
+        : 'Не удалось получить токен доступа.';
+  } finally {
+    adminLink.loading = false;
+  }
+};
+
+const copyAdminLink = async () => {
+  if (!adminLink.url) {
+    return;
+  }
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(adminLink.url);
+      adminLink.copied = true;
+      setTimeout(() => {
+        adminLink.copied = false;
+      }, 2000);
+    } else {
+      throw new Error('Clipboard API недоступен');
+    }
+  } catch (error) {
+    console.warn('Failed to copy admin link', error);
+    adminLink.error = 'Не удалось скопировать ссылку. Скопируйте её вручную.';
+    adminLink.copied = false;
+  }
 };
 
 const resetStudyState = () => {
@@ -1609,7 +1864,10 @@ watch(memorizeTopic, (topic) => {
 
 onMounted(() => {
   loadFavoritesFromStorage();
-  initTelegramIntegration();
+  initializeAdminIdentity();
+  if (typeof window !== 'undefined') {
+    window.addEventListener('storage', handleIdentityStorageEvent);
+  }
   loadTopics(1);
   ensureFavoriteTopicsLoaded();
 });
@@ -1617,5 +1875,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.body.classList.remove('study-open');
   document.body.classList.remove('memorize-open');
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('storage', handleIdentityStorageEvent);
+  }
 });
 </script>
