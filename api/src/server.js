@@ -1,61 +1,237 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
+const crypto = require('crypto');
+const sshpk = require('sshpk');
 
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
-const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'admin';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'adminadmin';
+const ADMIN_PUBLIC_KEY = (process.env.ADMIN_PUBLIC_KEY || '').trim();
+const SESSION_COOKIE_NAME = 'kartica_admin_session';
+const SESSION_TTL_MS = Math.max(parseInt(process.env.ADMIN_SESSION_TTL_MS, 10) || 1000 * 60 * 30, 1000 * 60 * 5);
+const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production';
+const COOKIE_SAME_SITE = process.env.ADMIN_COOKIE_SAME_SITE || 'Lax';
+const DEFAULT_ALLOWED_ORIGIN = process.env.ADMIN_ALLOWED_ORIGIN || 'http://localhost:5173';
+const ALLOWED_ORIGINS = (process.env.ADMIN_ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGIN)
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const activeSessions = new Map();
+
+const normalizeSshPublicKey = (key) => {
+  if (!key || typeof key !== 'string') {
+    return '';
+  }
+  const trimmed = key.trim();
+  if (!trimmed) {
+    return '';
+  }
+  const [type, value] = trimmed.split(/\s+/);
+  if (!type || !value) {
+    return '';
+  }
+  return `${type} ${value}`;
+};
+
+const ADMIN_PUBLIC_KEY_NORMALIZED = normalizeSshPublicKey(ADMIN_PUBLIC_KEY);
+
+const derivePublicKeyFromPrivate = (privateKeyContent) => {
+  const normalizedContent = typeof privateKeyContent === 'string' ? privateKeyContent.trim() : privateKeyContent;
+  const attempts = [
+    () => {
+      const privateKey = crypto.createPrivateKey({ key: normalizedContent });
+      const publicKey = crypto.createPublicKey(privateKey);
+      return publicKey.export({ format: 'ssh' }).toString();
+    },
+    () => {
+      const privateKey = sshpk.parsePrivateKey(normalizedContent, 'auto');
+      return privateKey.toPublic().toString('ssh');
+    },
+  ];
+
+  let lastError;
+  for (const attempt of attempts) {
+    try {
+      return attempt();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error('Unable to derive public key from provided private key');
+};
 
 app.use(express.json());
 
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  const allowedOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+
+  if (allowedOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  }
+  if (origin) {
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }
   return next();
 });
 
-function isAuthorizedAdmin(req) {
-  const header = req.headers.authorization;
-  if (!header || typeof header !== 'string') {
+function doesPrivateKeyMatchAdmin(privateKeyContent) {
+  if (!ADMIN_PUBLIC_KEY_NORMALIZED) {
+    console.warn('ADMIN_PUBLIC_KEY is not configured');
     return false;
   }
 
-  const [scheme, credentials] = header.split(' ');
-  if (scheme !== 'Basic' || !credentials) {
+  if (!privateKeyContent || typeof privateKeyContent !== 'string') {
     return false;
   }
 
-  let decoded;
+  const normalizedContent = privateKeyContent.trim();
+  if (!normalizedContent) {
+    return false;
+  }
+
   try {
-    decoded = Buffer.from(credentials, 'base64').toString('utf8');
+    const derivedPublicKey = normalizeSshPublicKey(derivePublicKeyFromPrivate(normalizedContent));
+    return derivedPublicKey === ADMIN_PUBLIC_KEY_NORMALIZED;
   } catch (error) {
+    console.warn('Failed to derive admin public key from provided key', error);
+
+    const normalizedProvided = normalizeSshPublicKey(normalizedContent);
+    if (normalizedProvided && normalizedProvided === ADMIN_PUBLIC_KEY_NORMALIZED) {
+      return true;
+    }
+
+    try {
+      const publicKeyFromInput = crypto
+        .createPublicKey({ key: normalizedContent, format: 'ssh' })
+        .export({ format: 'ssh' })
+        .toString();
+      return normalizeSshPublicKey(publicKeyFromInput) === ADMIN_PUBLIC_KEY_NORMALIZED;
+    } catch (secondaryError) {
+      console.warn('Provided key does not match configured admin key', secondaryError);
+    }
+
     return false;
   }
+}
 
-  const separatorIndex = decoded.indexOf(':');
-  if (separatorIndex === -1) {
-    return false;
+function setSessionCookie(res, token, ttlMs = SESSION_TTL_MS) {
+  const maxAgeSeconds = Math.max(Math.floor(ttlMs / 1000), 0);
+  const cookieParts = [
+    `${SESSION_COOKIE_NAME}=${token}`,
+    'Path=/',
+    'HttpOnly',
+    `Max-Age=${maxAgeSeconds}`,
+    `SameSite=${COOKIE_SAME_SITE}`,
+  ];
+  if (COOKIE_SECURE) {
+    cookieParts.push('Secure');
+  }
+  res.setHeader('Set-Cookie', cookieParts.join('; '));
+}
+
+function clearSessionCookie(res) {
+  const cookieParts = [
+    `${SESSION_COOKIE_NAME}=`,
+    'Path=/',
+    'HttpOnly',
+    'Max-Age=0',
+    `SameSite=${COOKIE_SAME_SITE}`,
+  ];
+  if (COOKIE_SECURE) {
+    cookieParts.push('Secure');
+  }
+  res.setHeader('Set-Cookie', cookieParts.join('; '));
+}
+
+function getSessionTokenFromRequest(req) {
+  const cookieHeader = req.headers.cookie;
+  if (!cookieHeader) {
+    return '';
   }
 
-  const username = decoded.slice(0, separatorIndex);
-  const password = decoded.slice(separatorIndex + 1);
+  const cookies = cookieHeader.split(';').map((chunk) => chunk.trim());
+  for (const cookie of cookies) {
+    if (!cookie) continue;
+    const [name, value] = cookie.split('=');
+    if (name === SESSION_COOKIE_NAME) {
+      return value || '';
+    }
+  }
+  return '';
+}
 
-  return username === ADMIN_LOGIN && password === ADMIN_PASSWORD;
+function getActiveSession(token) {
+  if (!token) {
+    return null;
+  }
+  const session = activeSessions.get(token);
+  if (!session) {
+    return null;
+  }
+  if (session.expiresAt <= Date.now()) {
+    activeSessions.delete(token);
+    return null;
+  }
+  return session;
 }
 
 function requireAdmin(req, res, next) {
-  if (isAuthorizedAdmin(req)) {
-    return next();
+  const token = getSessionTokenFromRequest(req);
+  const session = getActiveSession(token);
+  if (!session) {
+    clearSessionCookie(res);
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  res.setHeader('WWW-Authenticate', 'Basic realm="Admin"');
-  return res.status(401).json({ error: 'Unauthorized' });
+  session.expiresAt = Date.now() + SESSION_TTL_MS;
+  setSessionCookie(res, token, SESSION_TTL_MS);
+  req.adminSessionToken = token;
+  return next();
 }
+
+app.post('/auth/login', (req, res) => {
+  const privateKeyContent = req.body?.key;
+
+  if (!privateKeyContent || typeof privateKeyContent !== 'string' || !privateKeyContent.trim()) {
+    return res.status(400).json({ error: 'Приватный ключ не передан' });
+  }
+
+  if (!doesPrivateKeyMatchAdmin(privateKeyContent)) {
+    return res.status(401).json({ error: 'Предоставленный ключ не подходит для входа' });
+  }
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = Date.now() + SESSION_TTL_MS;
+
+  activeSessions.set(token, { expiresAt });
+  setSessionCookie(res, token, SESSION_TTL_MS);
+
+  return res.json({ status: 'ok', expiresAt });
+});
+
+app.post('/auth/logout', (req, res) => {
+  const token = getSessionTokenFromRequest(req);
+  if (token) {
+    activeSessions.delete(token);
+  }
+  clearSessionCookie(res);
+  return res.status(204).send();
+});
+
+app.get('/auth/verify', requireAdmin, (req, res) => {
+  const token = req.adminSessionToken;
+  const session = getActiveSession(token);
+  res.json({ status: 'ok', expiresAt: session?.expiresAt });
+});
 
 function parsePagination(query) {
   const page = Math.max(parseInt(query.page, 10) || 1, 1);

@@ -3,16 +3,25 @@
     <div v-if="!isAuthenticated" class="admin-auth">
       <form class="admin-auth-card" @submit.prevent="handleLogin">
         <h1>Вход в админку</h1>
+        <p class="muted">
+          Для доступа загрузите приватный SSH-ключ администратора. Он будет проверен по публичному ключу,
+          указанному на сервере.
+        </p>
         <label class="form-field">
-          <span>Логин</span>
-          <input v-model.trim="username" type="text" autocomplete="username" required />
+          <span>Файл приватного ключа</span>
+          <input
+            ref="keyFileInput"
+            type="file"
+            accept=".key,.pem,.ppk,.txt,.pub"
+            @change="handleKeyFileChange"
+          />
         </label>
-        <label class="form-field">
-          <span>Пароль</span>
-          <input v-model="password" type="password" autocomplete="current-password" required />
-        </label>
+        <p v-if="keyFileName" class="muted">Выбран файл: {{ keyFileName }}</p>
+        <p v-if="keyReadError" class="form-error">{{ keyReadError }}</p>
         <p v-if="loginError" class="form-error">{{ loginError }}</p>
-        <button type="submit" class="primary-button">Войти</button>
+        <button type="submit" class="primary-button" :disabled="!canSubmitKey">
+          {{ loginPending ? 'Проверка ключа...' : 'Войти' }}
+        </button>
       </form>
     </div>
     <div v-else class="admin-dashboard">
@@ -152,36 +161,28 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { apiBaseUrl } from './apiConfig.js';
 
-const ADMIN_LOGIN = 'admin';
-const ADMIN_PASSWORD = 'adminadmin';
-const STORAGE_KEY = 'kartica-admin-authenticated';
+const privateKeyContent = ref('');
+const keyFileName = ref('');
+const keyReadError = ref('');
+const loginError = ref('');
+const loginPending = ref(false);
+const isReadingKey = ref(false);
+const keyFileInput = ref(null);
+const isAuthenticated = ref(false);
 
-const adminAuthToken = ref('');
-
-const computeAdminAuthToken = () => {
-  const raw = `${ADMIN_LOGIN}:${ADMIN_PASSWORD}`;
-  if (typeof globalThis !== 'undefined' && typeof globalThis.btoa === 'function') {
-    return globalThis.btoa(raw);
+const normalizePrivateKey = (value) => {
+  if (typeof value !== 'string') {
+    return '';
   }
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(raw, 'utf8').toString('base64');
-  }
-  return '';
+  return value.replace(/\r\n?/g, '\n');
 };
 
-const applyAuthHeaders = (headers = {}) => {
-  const base = headers || {};
-  if (!adminAuthToken.value) {
-    return { ...base };
-  }
-  return {
-    ...base,
-    Authorization: `Basic ${adminAuthToken.value}`,
-  };
-};
+const canSubmitKey = computed(
+  () => Boolean(privateKeyContent.value.trim()) && !loginPending.value && !isReadingKey.value,
+);
 
 const buildApiUrl = (path, params = {}) => {
   const url = new URL(path, `${apiBaseUrl}/`);
@@ -192,13 +193,6 @@ const buildApiUrl = (path, params = {}) => {
   });
   return url.toString();
 };
-
-const username = ref('');
-const password = ref('');
-const loginError = ref('');
-const isAuthenticated = ref(false);
-
-const storage = typeof window !== 'undefined' ? window.localStorage : null;
 
 const groups = ref([]);
 const groupsLoading = ref(false);
@@ -259,19 +253,56 @@ const resetActiveGroup = () => {
 
 const clearAuthState = () => {
   isAuthenticated.value = false;
-  adminAuthToken.value = '';
-  storage?.removeItem(STORAGE_KEY);
   resetActiveGroup();
-  username.value = '';
-  password.value = '';
+  loginPending.value = false;
+  isReadingKey.value = false;
   loginError.value = '';
+  keyReadError.value = '';
+  privateKeyContent.value = '';
+  keyFileName.value = '';
+  if (keyFileInput.value) {
+    keyFileInput.value.value = '';
+  }
 };
 
 const handleUnauthorized = () => {
-  const message = 'Сессия администратора истекла. Войдите снова.';
+  const message = 'Доступ администратора отклонён. Загрузите ключ снова.';
   clearAuthState();
   showFeedback('error', message);
   return message;
+};
+
+const handleKeyFileChange = async (event) => {
+  keyReadError.value = '';
+  loginError.value = '';
+
+  const files = event?.target?.files;
+  if (!files || files.length === 0) {
+    privateKeyContent.value = '';
+    keyFileName.value = '';
+    return;
+  }
+
+  const [file] = files;
+  keyFileName.value = file?.name || '';
+  isReadingKey.value = true;
+
+  try {
+    const content = await file.text();
+    const normalized = normalizePrivateKey(content);
+    if (!normalized.trim()) {
+      privateKeyContent.value = '';
+      keyReadError.value = 'Файл ключа пустой';
+      return;
+    }
+    privateKeyContent.value = normalized;
+  } catch (error) {
+    console.error('Failed to read admin key file', error);
+    privateKeyContent.value = '';
+    keyReadError.value = 'Не удалось прочитать файл ключа';
+  } finally {
+    isReadingKey.value = false;
+  }
 };
 
 const parseErrorResponse = async (response) => {
@@ -370,7 +401,9 @@ const fetchGroups = async () => {
   groupsLoading.value = true;
   groupsError.value = '';
   try {
-    const response = await fetch(buildApiUrl('/groups', { page: 1, pageSize: 200 }));
+    const response = await fetch(buildApiUrl('/groups', { page: 1, pageSize: 200 }), {
+      credentials: 'include',
+    });
     if (!response.ok) {
       throw new Error(await parseErrorResponse(response));
     }
@@ -397,7 +430,9 @@ const fetchGroupDetails = async (groupId) => {
   activeGroupLoading.value = true;
   activeGroupError.value = '';
   try {
-    const response = await fetch(buildApiUrl(`/groups/${groupId}`));
+    const response = await fetch(buildApiUrl(`/groups/${groupId}`), {
+      credentials: 'include',
+    });
     if (!response.ok) {
       throw new Error(await parseErrorResponse(response));
     }
@@ -429,22 +464,74 @@ const handleSelectGroup = async (groupId) => {
   await fetchGroupDetails(groupId);
 };
 
-const handleLogin = () => {
+const handleLogin = async () => {
   loginError.value = '';
-  if (username.value.trim() !== ADMIN_LOGIN || password.value !== ADMIN_PASSWORD) {
-    loginError.value = 'Неверный логин или пароль';
+
+  if (isReadingKey.value) {
+    loginError.value = 'Дождитесь завершения чтения файла ключа';
     return;
   }
-  adminAuthToken.value = computeAdminAuthToken();
-  isAuthenticated.value = true;
-  storage?.setItem(STORAGE_KEY, '1');
-  showFeedback('success', 'Вы успешно вошли в админку');
-  fetchGroups();
+
+  if (!privateKeyContent.value.trim()) {
+    loginError.value = 'Загрузите файл приватного ключа';
+    return;
+  }
+
+  loginPending.value = true;
+
+  try {
+    const response = await fetch(buildApiUrl('/auth/login'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ key: privateKeyContent.value }),
+    });
+
+    if (!response.ok) {
+      let errorMessage = '';
+      try {
+        const data = await response.json();
+        if (data && typeof data === 'object' && data.error) {
+          errorMessage = data.error;
+        }
+      } catch (error) {
+        // ignore malformed JSON
+      }
+      throw new Error(errorMessage || `Не удалось подтвердить ключ администратора (код ${response.status})`);
+    }
+
+    isAuthenticated.value = true;
+    showFeedback('success', 'Вы успешно вошли в админку');
+    privateKeyContent.value = '';
+    keyFileName.value = '';
+    if (keyFileInput.value) {
+      keyFileInput.value.value = '';
+    }
+    await fetchGroups();
+  } catch (error) {
+    console.error('Failed to verify admin key', error);
+    clearAuthState();
+    loginError.value =
+      error instanceof Error && error.message
+        ? error.message
+        : 'Не удалось подтвердить ключ администратора';
+  } finally {
+    loginPending.value = false;
+  }
 };
 
-const logout = () => {
-  clearAuthState();
-  showFeedback('success', 'Вы вышли из админки');
+const logout = async () => {
+  try {
+    await fetch(buildApiUrl('/auth/logout'), {
+      method: 'POST',
+      credentials: 'include',
+    });
+  } catch (error) {
+    console.warn('Не удалось корректно завершить сессию администратора', error);
+  } finally {
+    clearAuthState();
+    showFeedback('success', 'Вы вышли из админки');
+  }
 };
 
 const createGroup = async () => {
@@ -456,7 +543,8 @@ const createGroup = async () => {
   try {
     const response = await fetch(buildApiUrl('/groups'), {
       method: 'POST',
-      headers: applyAuthHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
         title: newGroupForm.title.trim(),
         description: newGroupForm.description.trim(),
@@ -489,7 +577,8 @@ const saveGroupDetails = async () => {
   try {
     const response = await fetch(buildApiUrl(`/groups/${activeGroup.value.id}`), {
       method: 'PUT',
-      headers: applyAuthHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
         title: groupForm.title.trim(),
         description: groupForm.description.trim(),
@@ -524,7 +613,7 @@ const deleteGroup = async () => {
   try {
     const response = await fetch(buildApiUrl(`/groups/${groupId}`), {
       method: 'DELETE',
-      headers: applyAuthHeaders(),
+      credentials: 'include',
     });
     if (!response.ok) {
       throw new Error(await parseErrorResponse(response));
@@ -549,7 +638,8 @@ const saveCards = async () => {
     const parsedCards = parseCardsText(cardsText.value);
     const response = await fetch(buildApiUrl(`/groups/${activeGroup.value.id}/cards`), {
       method: 'PUT',
-      headers: applyAuthHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
         cards: parsedCards.map((card) => ({
           term: card.term,
@@ -588,16 +678,22 @@ const retryActiveGroup = () => {
   }
 };
 
-const restoreSession = () => {
+const restoreSession = async () => {
   try {
-    const stored = storage?.getItem(STORAGE_KEY);
-    if (stored === '1') {
-      adminAuthToken.value = computeAdminAuthToken();
-      isAuthenticated.value = true;
-      fetchGroups();
+    const response = await fetch(buildApiUrl('/auth/verify'), {
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      clearAuthState();
+      return;
     }
+
+    isAuthenticated.value = true;
+    await fetchGroups();
   } catch (error) {
     console.warn('Не удалось восстановить сессию администратора', error);
+    clearAuthState();
   }
 };
 
