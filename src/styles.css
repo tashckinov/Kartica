@@ -852,6 +852,7 @@ body.admin-route #app {
 .search-screen {
   display: grid;
   gap: clamp(18px, 5vw, 28px);
+  padding-inline: clamp(18px, 6vw, 30px);
 }
 
 .search-header {
