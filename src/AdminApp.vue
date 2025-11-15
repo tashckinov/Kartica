@@ -159,6 +159,30 @@ const ADMIN_LOGIN = 'admin';
 const ADMIN_PASSWORD = 'adminadmin';
 const STORAGE_KEY = 'kartica-admin-authenticated';
 
+const adminAuthToken = ref('');
+
+const computeAdminAuthToken = () => {
+  const raw = `${ADMIN_LOGIN}:${ADMIN_PASSWORD}`;
+  if (typeof globalThis !== 'undefined' && typeof globalThis.btoa === 'function') {
+    return globalThis.btoa(raw);
+  }
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(raw, 'utf8').toString('base64');
+  }
+  return '';
+};
+
+const applyAuthHeaders = (headers = {}) => {
+  const base = headers || {};
+  if (!adminAuthToken.value) {
+    return { ...base };
+  }
+  return {
+    ...base,
+    Authorization: `Basic ${adminAuthToken.value}`,
+  };
+};
+
 const buildApiUrl = (path, params = {}) => {
   const url = new URL(path, `${apiBaseUrl}/`);
   Object.entries(params).forEach(([key, value]) => {
@@ -223,7 +247,37 @@ const showFeedback = (type, message) => {
   }
 };
 
+const resetActiveGroup = () => {
+  activeGroup.value = null;
+  activeGroupLoading.value = false;
+  activeGroupError.value = '';
+  selectedGroupId.value = null;
+  groupForm.title = '';
+  groupForm.description = '';
+  cardsText.value = '';
+};
+
+const clearAuthState = () => {
+  isAuthenticated.value = false;
+  adminAuthToken.value = '';
+  storage?.removeItem(STORAGE_KEY);
+  resetActiveGroup();
+  username.value = '';
+  password.value = '';
+  loginError.value = '';
+};
+
+const handleUnauthorized = () => {
+  const message = 'Сессия администратора истекла. Войдите снова.';
+  clearAuthState();
+  showFeedback('error', message);
+  return message;
+};
+
 const parseErrorResponse = async (response) => {
+  if (response.status === 401) {
+    return handleUnauthorized();
+  }
   try {
     const data = await response.json();
     if (data && typeof data === 'object' && data.error) {
@@ -233,16 +287,6 @@ const parseErrorResponse = async (response) => {
     // ignore
   }
   return `Запрос завершился с ошибкой ${response.status}`;
-};
-
-const resetActiveGroup = () => {
-  activeGroup.value = null;
-  activeGroupLoading.value = false;
-  activeGroupError.value = '';
-  selectedGroupId.value = null;
-  groupForm.title = '';
-  groupForm.description = '';
-  cardsText.value = '';
 };
 
 const formatCardsText = (cards = []) =>
@@ -391,6 +435,7 @@ const handleLogin = () => {
     loginError.value = 'Неверный логин или пароль';
     return;
   }
+  adminAuthToken.value = computeAdminAuthToken();
   isAuthenticated.value = true;
   storage?.setItem(STORAGE_KEY, '1');
   showFeedback('success', 'Вы успешно вошли в админку');
@@ -398,11 +443,7 @@ const handleLogin = () => {
 };
 
 const logout = () => {
-  isAuthenticated.value = false;
-  storage?.removeItem(STORAGE_KEY);
-  resetActiveGroup();
-  username.value = '';
-  password.value = '';
+  clearAuthState();
   showFeedback('success', 'Вы вышли из админки');
 };
 
@@ -415,7 +456,7 @@ const createGroup = async () => {
   try {
     const response = await fetch(buildApiUrl('/groups'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: applyAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         title: newGroupForm.title.trim(),
         description: newGroupForm.description.trim(),
@@ -448,7 +489,7 @@ const saveGroupDetails = async () => {
   try {
     const response = await fetch(buildApiUrl(`/groups/${activeGroup.value.id}`), {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: applyAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         title: groupForm.title.trim(),
         description: groupForm.description.trim(),
@@ -481,7 +522,10 @@ const deleteGroup = async () => {
 
   groupDeleting.value = true;
   try {
-    const response = await fetch(buildApiUrl(`/groups/${groupId}`), { method: 'DELETE' });
+    const response = await fetch(buildApiUrl(`/groups/${groupId}`), {
+      method: 'DELETE',
+      headers: applyAuthHeaders(),
+    });
     if (!response.ok) {
       throw new Error(await parseErrorResponse(response));
     }
@@ -505,7 +549,7 @@ const saveCards = async () => {
     const parsedCards = parseCardsText(cardsText.value);
     const response = await fetch(buildApiUrl(`/groups/${activeGroup.value.id}/cards`), {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: applyAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         cards: parsedCards.map((card) => ({
           term: card.term,
@@ -548,6 +592,7 @@ const restoreSession = () => {
   try {
     const stored = storage?.getItem(STORAGE_KEY);
     if (stored === '1') {
+      adminAuthToken.value = computeAdminAuthToken();
       isAuthenticated.value = true;
       fetchGroups();
     }

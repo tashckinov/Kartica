@@ -4,18 +4,58 @@ const { PrismaClient } = require('@prisma/client');
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
+const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'admin';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'adminadmin';
 
 app.use(express.json());
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }
   return next();
 });
+
+function isAuthorizedAdmin(req) {
+  const header = req.headers.authorization;
+  if (!header || typeof header !== 'string') {
+    return false;
+  }
+
+  const [scheme, credentials] = header.split(' ');
+  if (scheme !== 'Basic' || !credentials) {
+    return false;
+  }
+
+  let decoded;
+  try {
+    decoded = Buffer.from(credentials, 'base64').toString('utf8');
+  } catch (error) {
+    return false;
+  }
+
+  const separatorIndex = decoded.indexOf(':');
+  if (separatorIndex === -1) {
+    return false;
+  }
+
+  const username = decoded.slice(0, separatorIndex);
+  const password = decoded.slice(separatorIndex + 1);
+
+  return username === ADMIN_LOGIN && password === ADMIN_PASSWORD;
+}
+
+function requireAdmin(req, res, next) {
+  if (isAuthorizedAdmin(req)) {
+    return next();
+  }
+
+  res.setHeader('WWW-Authenticate', 'Basic realm="Admin"');
+  return res.status(401).json({ error: 'Unauthorized' });
+}
 
 function parsePagination(query) {
   const page = Math.max(parseInt(query.page, 10) || 1, 1);
@@ -207,7 +247,7 @@ app.get('/cards/:id', async (req, res) => {
   }
 });
 
-app.post('/groups', async (req, res) => {
+app.post('/groups', requireAdmin, async (req, res) => {
   try {
     const title = String(req.body?.title ?? '').trim();
     const descriptionRaw = req.body?.description;
@@ -236,7 +276,7 @@ app.post('/groups', async (req, res) => {
   }
 });
 
-app.put('/groups/:id', async (req, res) => {
+app.put('/groups/:id', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
@@ -277,7 +317,7 @@ app.put('/groups/:id', async (req, res) => {
   }
 });
 
-app.put('/groups/:id/cards', async (req, res) => {
+app.put('/groups/:id/cards', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
@@ -306,7 +346,7 @@ app.put('/groups/:id/cards', async (req, res) => {
   }
 });
 
-app.delete('/groups/:id', async (req, res) => {
+app.delete('/groups/:id', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
