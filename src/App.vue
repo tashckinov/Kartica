@@ -16,6 +16,41 @@
             </div>
             <p v-else class="profile-placeholder">{{ profileFallbackText }}</p>
           </div>
+          <div class="profile-card profile-admin">
+            <h3>Создание контента</h3>
+            <p class="profile-admin-description">
+              Получите специальную ссылку, чтобы открыть панель управления и добавлять собственные группы.
+            </p>
+            <p v-if="!canRequestAdminLink" class="profile-admin-warning">
+              Откройте приложение внутри Telegram, чтобы получить ссылку для редактирования.
+            </p>
+            <div class="profile-admin-actions">
+              <button
+                class="profile-admin-button"
+                type="button"
+                @click="requestAdminLink"
+                :disabled="adminLink.loading || !canRequestAdminLink"
+              >
+                {{ adminLink.loading ? 'Получаем ссылку…' : 'Перейти к созданию' }}
+              </button>
+              <button
+                v-if="hasAdminLink"
+                class="profile-admin-copy"
+                type="button"
+                @click="copyAdminLink"
+              >
+                {{ adminLink.copied ? 'Скопировано!' : 'Скопировать ссылку' }}
+              </button>
+            </div>
+            <p v-if="adminLink.error" class="profile-admin-error">{{ adminLink.error }}</p>
+            <div v-if="hasAdminLink" class="profile-admin-link">
+              <input type="text" :value="adminLink.url" readonly />
+              <a :href="adminLink.url" target="_blank" rel="noopener" class="profile-admin-open">Открыть панель</a>
+            </div>
+            <p v-if="hasAdminLink" class="profile-admin-hint">
+              После перехода токен сохранится в браузере и будет действовать 12 часов.
+            </p>
+          </div>
           <div class="profile-card profile-favorites">
             <h3>Избранные темы</h3>
             <div v-if="isFavoritesLoading" class="profile-favorites-state" aria-live="polite">
@@ -890,6 +925,14 @@ const userProfile = reactive({
   languageCode: ''
 });
 const isTelegramEnvironment = ref(false);
+const telegramInitData = ref('');
+
+const adminLink = reactive({
+  url: '',
+  loading: false,
+  error: '',
+  copied: false,
+});
 
 const setUserProfile = (user = {}) => {
   userProfile.id = user.id ?? null;
@@ -925,6 +968,9 @@ const initTelegramIntegration = () => {
     isTelegramEnvironment.value = true;
     initData = webApp.initData || '';
     telegramUser = webApp.initDataUnsafe?.user || null;
+    if (initData) {
+      telegramInitData.value = initData.trim();
+    }
   }
 
   if (!telegramUser && !initData) {
@@ -932,11 +978,15 @@ const initTelegramIntegration = () => {
     initData = params.get('tgWebAppInitData') || params.get('initData') || '';
     if (initData) {
       isTelegramEnvironment.value = true;
+      telegramInitData.value = initData.trim();
     }
   }
 
   if (!telegramUser) {
     telegramUser = parseTelegramUserFromInitData(initData) || null;
+    if (!telegramInitData.value && initData) {
+      telegramInitData.value = initData.trim();
+    }
   }
 
   if (telegramUser) {
@@ -973,6 +1023,9 @@ const profileFallbackText = computed(() => {
   return 'Telegram не передал данные пользователя.';
 });
 
+const canRequestAdminLink = computed(() => Boolean(telegramInitData.value));
+const hasAdminLink = computed(() => Boolean(adminLink.url));
+
 const buildApiUrl = (path, params = {}) => {
   const url = new URL(path, `${apiBaseUrl}/`);
   Object.entries(params).forEach(([key, value]) => {
@@ -981,6 +1034,83 @@ const buildApiUrl = (path, params = {}) => {
     }
   });
   return url.toString();
+};
+
+const readApiErrorMessage = async (response, fallbackMessage) => {
+  try {
+    const data = await response.json();
+    if (data && typeof data === 'object' && typeof data.error === 'string') {
+      const trimmed = data.error.trim();
+      if (trimmed) {
+        return trimmed;
+      }
+    }
+  } catch (error) {
+    // ignore JSON parsing issues
+  }
+  return fallbackMessage;
+};
+
+const requestAdminLink = async () => {
+  adminLink.loading = true;
+  adminLink.error = '';
+  adminLink.copied = false;
+  try {
+    const initData = telegramInitData.value;
+    if (!initData) {
+      throw new Error('Telegram не передал данные для авторизации. Откройте приложение внутри Telegram.');
+    }
+
+    const response = await fetch(buildApiUrl('/auth/token'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData }),
+    });
+
+    if (!response.ok) {
+      const message = await readApiErrorMessage(response, 'Не удалось получить токен доступа.');
+      throw new Error(message);
+    }
+
+    const data = await response.json();
+    if (!data || typeof data.token !== 'string' || !data.token.trim()) {
+      throw new Error('Сервер не вернул токен доступа.');
+    }
+
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const baseUrl = origin ? origin.replace(/\/$/, '') : '';
+    adminLink.url = `${baseUrl}/admin?token=${encodeURIComponent(data.token)}`;
+  } catch (error) {
+    console.error('Failed to request admin token link', error);
+    adminLink.url = '';
+    adminLink.error =
+      error instanceof Error && error.message
+        ? error.message
+        : 'Не удалось получить токен доступа.';
+  } finally {
+    adminLink.loading = false;
+  }
+};
+
+const copyAdminLink = async () => {
+  if (!adminLink.url) {
+    return;
+  }
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(adminLink.url);
+      adminLink.copied = true;
+      setTimeout(() => {
+        adminLink.copied = false;
+      }, 2000);
+    } else {
+      throw new Error('Clipboard API недоступен');
+    }
+  } catch (error) {
+    console.warn('Failed to copy admin link', error);
+    adminLink.error = 'Не удалось скопировать ссылку. Скопируйте её вручную.';
+    adminLink.copied = false;
+  }
 };
 
 const resetStudyState = () => {

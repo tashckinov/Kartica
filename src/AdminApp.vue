@@ -2,38 +2,36 @@
   <div class="admin-app">
     <div v-if="!isAuthenticated" class="admin-auth">
       <div class="admin-auth-card">
-        <h1>Вход в админку</h1>
+        <h1>Доступ к админке</h1>
         <p class="muted">
-          Авторизуйтесь через Telegram, чтобы управлять контентом карточек.
+          Создайте ссылку для редактирования в профиле приложения и откройте её в браузере.
         </p>
-        <p v-if="telegramWebAppAvailable" class="muted">
-          Данные Telegram переданы автоматически. Нажмите кнопку ниже, чтобы подтвердить вход.
+        <p class="muted">
+          Ссылка имеет формат <code>/admin?token=…</code> и действует 12 часов.
         </p>
-        <p v-else-if="telegramConfigLoading" class="muted">
-          Загружаем параметры входа через Telegram…
+        <p v-if="tokenCheckPending" class="muted pending-message">Проверяем токен…</p>
+        <p v-if="authError" class="form-error">{{ authError }}</p>
+        <form class="token-form" @submit.prevent="submitManualToken">
+          <label class="form-field">
+            <span>Токен доступа</span>
+            <input
+              v-model.trim="manualToken"
+              type="text"
+              name="admin-token"
+              autocomplete="off"
+              placeholder="Вставьте токен из ссылки"
+              :disabled="tokenCheckPending"
+            />
+          </label>
+          <button class="primary-button" type="submit" :disabled="tokenCheckPending">
+            {{ tokenCheckPending ? 'Проверяем…' : 'Подтвердить токен' }}
+          </button>
+        </form>
+        <p v-if="manualTokenError" class="form-error">{{ manualTokenError }}</p>
+        <p class="muted small">
+          Если вы только что открыли ссылку с токеном, авторизация произойдёт автоматически. После входа
+          токен сохранится в браузере до истечения срока действия.
         </p>
-        <p v-else-if="externalLoginAvailable" class="muted">
-          Откройте панель в любом браузере и нажмите кнопку ниже — Telegram откроет окно подтверждения.
-        </p>
-        <p v-else class="muted">
-          Откройте панель внутри Telegram Mini App или убедитесь, что сервер настроен для внешнего входа через Telegram.
-        </p>
-        <p v-if="externalLoginError && !externalLoginAvailable" class="form-error">{{ externalLoginError }}</p>
-        <p v-if="loginPending && !telegramWebAppAvailable" class="muted pending-message">Ожидаем подтверждение…</p>
-        <p v-if="loginError" class="form-error">{{ loginError }}</p>
-        <button
-          v-if="telegramWebAppAvailable"
-          type="button"
-          class="primary-button"
-          @click="handleTelegramLogin"
-          :disabled="loginPending"
-        >
-          {{ loginPending ? 'Ожидаем подтверждение…' : 'Авторизоваться через Telegram' }}
-        </button>
-        <div v-else-if="externalLoginAvailable" class="external-login-wrapper">
-          <div ref="telegramLoginContainer" class="telegram-login-container"></div>
-          <p v-if="externalLoginError" class="form-error">{{ externalLoginError }}</p>
-        </div>
       </div>
     </div>
     <div v-else class="admin-dashboard">
@@ -42,6 +40,7 @@
           <h1>Панель администратора</h1>
           <p>Управление группами и карточками</p>
           <p v-if="adminUserLabel" class="admin-header__user">Вы вошли как {{ adminUserLabel }}</p>
+          <p v-if="tokenExpiryText" class="admin-header__user">{{ tokenExpiryText }}</p>
         </div>
         <div class="admin-header__actions">
           <button class="ghost-button" type="button" @click="fetchGroups" :disabled="groupsLoading">
@@ -211,134 +210,22 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { apiBaseUrl } from './apiConfig.js';
 
 const OWNERSHIP_ERROR_MESSAGE = 'Вы можете изменять только созданные вами группы';
 
-const normalizeTelegramUserClient = (user) => {
-  if (!user || typeof user !== 'object') {
-    return null;
-  }
-  const normalized = { ...user };
-  const rawId =
-    user.id ??
-    (typeof user.user === 'object' && user.user !== null ? user.user.id : undefined);
-  if (rawId === undefined || rawId === null || rawId === '') {
-    normalized.id = '';
-  } else {
-    normalized.id = String(rawId);
-  }
-  return normalized;
-};
+const ADMIN_TOKEN_STORAGE_KEY = 'karticaAdminToken';
+const ADMIN_TOKEN_EXPIRES_AT_KEY = 'karticaAdminTokenExpiresAt';
 
-const extractTelegramUserId = (user) => {
-  const normalized = normalizeTelegramUserClient(user);
-  if (!normalized) {
-    return '';
-  }
-  return typeof normalized.id === 'string' ? normalized.id.trim() : '';
-};
-
-const resolveTelegramUser = (...candidates) => {
-  for (const candidate of candidates) {
-    const normalized = normalizeTelegramUserClient(candidate);
-    if (normalized && normalized.id) {
-      return normalized;
-    }
-  }
-  for (const candidate of candidates) {
-    const normalized = normalizeTelegramUserClient(candidate);
-    if (normalized) {
-      return normalized;
-    }
-  }
-  return null;
-};
-
-const loginError = ref('');
-const loginPending = ref(false);
 const isAuthenticated = ref(false);
-const telegramUser = ref(null);
-
-const currentUserId = computed(() => extractTelegramUserId(telegramUser.value));
-
-const telegramBotUsername = ref('');
-const telegramWebAppAvailable = ref(false);
-const telegramLoginContainer = ref(null);
-const externalLoginError = ref('');
-const telegramConfigLoading = ref(true);
-
-const externalLoginAvailable = computed(() => Boolean(telegramBotUsername.value));
-
-const buildApiUrl = (path, params = {}) => {
-  const url = new URL(path, `${apiBaseUrl}/`);
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') {
-      url.searchParams.set(key, value);
-    }
-  });
-  return url.toString();
-};
-
-const loadTelegramLoginConfig = async () => {
-  if (typeof window === 'undefined') {
-    telegramConfigLoading.value = false;
-    return;
-  }
-
-  telegramConfigLoading.value = true;
-  externalLoginError.value = '';
-
-  try {
-    const response = await fetch(buildApiUrl('/auth/telegram-config'), {
-      credentials: 'include',
-    });
-
-    let data = null;
-    try {
-      data = await response.json();
-    } catch (error) {
-      // ignore JSON parse errors
-    }
-
-    const errorMessage =
-      data && typeof data === 'object' && typeof data.error === 'string'
-        ? data.error.trim()
-        : '';
-
-    if (!response.ok) {
-      telegramBotUsername.value = '';
-      externalLoginError.value =
-        errorMessage || 'Не удалось получить настройки Telegram. Попробуйте обновить страницу.';
-      return;
-    }
-
-    const usernameRaw =
-      (data && (data.botUsername ?? data.bot_username)) !== undefined
-        ? data.botUsername ?? data.bot_username
-        : '';
-    const username = typeof usernameRaw === 'string' ? usernameRaw.trim() : '';
-
-    telegramBotUsername.value = username;
-
-    if (username) {
-      externalLoginError.value = '';
-    } else if (errorMessage) {
-      externalLoginError.value = errorMessage;
-    } else {
-      externalLoginError.value =
-        'Бот Telegram не настроен для внешнего входа. Обратитесь к администратору.';
-    }
-  } catch (error) {
-    console.error('Failed to load Telegram admin config', error);
-    telegramBotUsername.value = '';
-    externalLoginError.value =
-      'Не удалось получить настройки Telegram. Попробуйте обновить страницу.';
-  } finally {
-    telegramConfigLoading.value = false;
-  }
-};
+const adminUser = ref(null);
+const adminToken = ref('');
+const tokenExpiresAt = ref(null);
+const authError = ref('');
+const tokenCheckPending = ref(false);
+const manualToken = ref('');
+const manualTokenError = ref('');
 
 const groups = ref([]);
 const groupsLoading = ref(false);
@@ -348,39 +235,6 @@ const selectedGroupId = ref(null);
 const activeGroup = ref(null);
 const activeGroupLoading = ref(false);
 const activeGroupError = ref('');
-
-const isGroupOwnedByCurrentUser = (group) => {
-  if (!group || typeof group !== 'object') {
-    return false;
-  }
-  const ownerId =
-    group.ownerId ??
-    (typeof group.owner_id === 'string' || typeof group.owner_id === 'number'
-      ? group.owner_id
-      : null);
-  if (ownerId === undefined || ownerId === null || ownerId === '') {
-    return false;
-  }
-  return String(ownerId).trim() === currentUserId.value;
-};
-
-const canEditActiveGroup = computed(() => isGroupOwnedByCurrentUser(activeGroup.value));
-
-const activeGroupOwnershipText = computed(() => {
-  const group = activeGroup.value;
-  if (!group) {
-    return '';
-  }
-  const ownerIdRaw = group.ownerId ?? group.owner_id ?? '';
-  const ownerId = typeof ownerIdRaw === 'string' ? ownerIdRaw.trim() : String(ownerIdRaw ?? '').trim();
-  if (!ownerId) {
-    return 'Группа создана до появления авторов и доступна только для чтения.';
-  }
-  if (canEditActiveGroup.value) {
-    return 'Вы создали эту группу и можете её редактировать.';
-  }
-  return `Группа создана другим пользователем (Telegram ID ${ownerId}). Редактирование недоступно.`;
-});
 
 const groupForm = reactive({ title: '', description: '' });
 const groupSaving = ref(false);
@@ -394,6 +248,24 @@ const newGroupSaving = ref(false);
 
 const feedback = reactive({ type: '', message: '' });
 let feedbackTimer = null;
+
+const currentUserId = computed(() => {
+  const id = adminUser.value?.id ?? adminUser.value?.user?.id;
+  if (id === undefined || id === null || id === '') {
+    return '';
+  }
+  return typeof id === 'string' ? id.trim() : String(id).trim();
+});
+
+const buildApiUrl = (path, params = {}) => {
+  const url = new URL(path, `${apiBaseUrl}/`);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, value);
+    }
+  });
+  return url.toString();
+};
 
 const getCardWord = (count) => {
   const normalized = Number.isFinite(count) ? count : 0;
@@ -430,36 +302,165 @@ const resetActiveGroup = () => {
   cardsText.value = '';
 };
 
-const clearAuthState = () => {
-  isAuthenticated.value = false;
-  telegramUser.value = null;
-  resetActiveGroup();
-  loginPending.value = false;
-  loginError.value = '';
-};
-
-const handleUnauthorized = () => {
-  const message = 'Сессия администратора недействительна. Авторизуйтесь через Telegram ещё раз.';
-  clearAuthState();
-  resolveTelegramInitData();
-  showFeedback('error', message);
-  return message;
-};
-
-const parseErrorResponse = async (response) => {
-  if (response.status === 401) {
-    return handleUnauthorized();
+const clearStoredToken = () => {
+  if (typeof window === 'undefined') {
+    return;
   }
   try {
-    const data = await response.json();
-    if (data && typeof data === 'object' && data.error) {
-      return data.error;
-    }
+    window.localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
   } catch (error) {
-    // ignore
+    console.warn('Не удалось удалить сохранённый токен администратора', error);
   }
-  return `Запрос завершился с ошибкой ${response.status}`;
+  try {
+    window.localStorage.removeItem(ADMIN_TOKEN_EXPIRES_AT_KEY);
+  } catch (error) {
+    console.warn('Не удалось удалить срок действия токена администратора', error);
+  }
+  tokenExpiresAt.value = null;
 };
+
+const storeToken = (token, expiresAt) => {
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token);
+    } catch (error) {
+      console.warn('Не удалось сохранить токен администратора', error);
+    }
+    try {
+      if (typeof expiresAt === 'number' && Number.isFinite(expiresAt)) {
+        window.localStorage.setItem(ADMIN_TOKEN_EXPIRES_AT_KEY, String(expiresAt));
+      } else {
+        window.localStorage.removeItem(ADMIN_TOKEN_EXPIRES_AT_KEY);
+      }
+    } catch (error) {
+      console.warn('Не удалось сохранить срок действия токена администратора', error);
+    }
+  }
+  tokenExpiresAt.value = typeof expiresAt === 'number' ? expiresAt : null;
+};
+
+const loadStoredToken = () => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const token = window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY);
+    if (!token) {
+      return null;
+    }
+    const expiresRaw = window.localStorage.getItem(ADMIN_TOKEN_EXPIRES_AT_KEY);
+    const expiresAtValue = expiresRaw ? Number(expiresRaw) : null;
+    if (expiresAtValue && Number.isFinite(expiresAtValue) && expiresAtValue <= Date.now()) {
+      clearStoredToken();
+      return null;
+    }
+    return { token, expiresAt: expiresAtValue };
+  } catch (error) {
+    console.warn('Не удалось прочитать сохранённый токен администратора', error);
+    return null;
+  }
+};
+
+const createAuthHeaders = (tokenOverride) => {
+  const token = tokenOverride || adminToken.value;
+  if (!token) {
+    return {};
+  }
+  return { Authorization: `Bearer ${token}` };
+};
+
+const clearAuthState = () => {
+  clearStoredToken();
+  isAuthenticated.value = false;
+  adminUser.value = null;
+  adminToken.value = '';
+  authError.value = '';
+  manualTokenError.value = '';
+  groups.value = [];
+  groupsError.value = '';
+  resetActiveGroup();
+};
+
+const isGroupOwnedByCurrentUser = (group) => {
+  if (!group || typeof group !== 'object') {
+    return false;
+  }
+  const ownerRaw = group.ownerId ?? group.owner_id;
+  if (ownerRaw === undefined || ownerRaw === null || ownerRaw === '') {
+    return false;
+  }
+  return String(ownerRaw).trim() === currentUserId.value;
+};
+
+const canEditActiveGroup = computed(() => isGroupOwnedByCurrentUser(activeGroup.value));
+
+const activeGroupOwnershipText = computed(() => {
+  const group = activeGroup.value;
+  if (!group) {
+    return '';
+  }
+  const ownerIdRaw = group.ownerId ?? group.owner_id ?? '';
+  const ownerId = typeof ownerIdRaw === 'string' ? ownerIdRaw.trim() : String(ownerIdRaw ?? '').trim();
+  if (!ownerId) {
+    return 'Группа создана до появления авторов и доступна только для чтения.';
+  }
+  if (canEditActiveGroup.value) {
+    return 'Вы создали эту группу и можете её редактировать.';
+  }
+  return `Группа создана другим пользователем (ID ${ownerId}). Редактирование недоступно.`;
+});
+
+const adminUserLabel = computed(() => {
+  if (!adminUser.value) {
+    return '';
+  }
+  const firstName = adminUser.value.first_name ?? adminUser.value.firstName ?? adminUser.value.user?.first_name ?? '';
+  const lastName = adminUser.value.last_name ?? adminUser.value.lastName ?? adminUser.value.user?.last_name ?? '';
+  const username = adminUser.value.username ?? adminUser.value.user?.username ?? '';
+  const id = adminUser.value.id ?? adminUser.value.user?.id;
+  const parts = [firstName, lastName]
+    .map((part) => (typeof part === 'string' ? part.trim() : ''))
+    .filter(Boolean);
+  if (parts.length) {
+    if (username) {
+      return `${parts.join(' ')} (@${username})`;
+    }
+    return parts.join(' ');
+  }
+  if (username) {
+    return `@${username}`;
+  }
+  if (id) {
+    return `ID ${id}`;
+  }
+  return '';
+});
+
+const tokenExpiryText = computed(() => {
+  if (!tokenExpiresAt.value) {
+    return '';
+  }
+  const remainingMs = tokenExpiresAt.value - Date.now();
+  if (remainingMs <= 0) {
+    return 'Токен истёк — получите новую ссылку в профиле.';
+  }
+  const totalMinutes = Math.floor(remainingMs / 60000);
+  if (totalMinutes >= 180) {
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (minutes > 0) {
+      return `Токен действует ещё примерно ${hours} ч ${minutes} мин.`;
+    }
+    return `Токен действует ещё примерно ${hours} ч.`;
+  }
+  if (totalMinutes >= 60) {
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `Токен действует ещё примерно ${hours} ч ${minutes} мин.`;
+  }
+  const minutes = Math.max(totalMinutes, 1);
+  return `Токен действует ещё примерно ${minutes} мин.`;
+});
 
 const formatCardsText = (cards = []) =>
   cards
@@ -542,12 +543,37 @@ const removeGroupFromList = (groupId) => {
   }
 };
 
+const handleUnauthorized = () => {
+  const message = 'Токен доступа недействителен или истёк. Получите новую ссылку в профиле.';
+  clearAuthState();
+  authError.value = message;
+  showFeedback('error', message);
+  return message;
+};
+
+const parseErrorResponse = async (response) => {
+  if (response.status === 401) {
+    return handleUnauthorized();
+  }
+  try {
+    const data = await response.json();
+    if (data && typeof data === 'object' && data.error) {
+      return data.error;
+    }
+  } catch (error) {
+    // ignore
+  }
+  return `Запрос завершился с ошибкой ${response.status}`;
+};
+
 const fetchGroups = async () => {
   groupsLoading.value = true;
   groupsError.value = '';
   try {
     const response = await fetch(buildApiUrl('/groups', { page: 1, pageSize: 200 }), {
-      credentials: 'include',
+      headers: {
+        ...createAuthHeaders(),
+      },
     });
     if (!response.ok) {
       throw new Error(await parseErrorResponse(response));
@@ -579,7 +605,9 @@ const fetchGroupDetails = async (groupId) => {
   activeGroupError.value = '';
   try {
     const response = await fetch(buildApiUrl(`/groups/${groupId}`), {
-      credentials: 'include',
+      headers: {
+        ...createAuthHeaders(),
+      },
     });
     if (!response.ok) {
       throw new Error(await parseErrorResponse(response));
@@ -617,389 +645,23 @@ const handleSelectGroup = async (groupId) => {
   await fetchGroupDetails(groupId);
 };
 
-const decodeTelegramUser = (raw) => {
-  if (!raw || typeof raw !== 'string') {
-    return null;
-  }
-  const queue = [raw];
-  const visited = new Set();
-
-  while (queue.length) {
-    const current = queue.shift();
-    if (typeof current !== 'string' || !current.trim() || visited.has(current)) {
-      continue;
-    }
-    visited.add(current);
-    const trimmed = current.trim();
-
-    if (trimmed.includes('=') && trimmed.includes('&')) {
-      try {
-        const params = new URLSearchParams(trimmed);
-        const userRaw = params.get('user');
-        if (userRaw) {
-          return JSON.parse(userRaw);
-        }
-        const id = params.get('id');
-        const hash = params.get('hash');
-        const authDate = params.get('auth_date');
-        if (id && hash && authDate) {
-          return {
-            id,
-            first_name: params.get('first_name') || undefined,
-            last_name: params.get('last_name') || undefined,
-            username: params.get('username') || undefined,
-            photo_url: params.get('photo_url') || undefined,
-          };
-        }
-      } catch (error) {
-        // ignore parse errors
-      }
-    }
-
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (parsed) {
-          if (parsed.user) {
-            if (typeof parsed.user === 'string') {
-              return JSON.parse(parsed.user);
-            }
-            return parsed.user;
-          }
-          if (parsed.id) {
-            return parsed;
-          }
-        }
-      } catch (error) {
-        // ignore JSON parse errors
-      }
-    }
-
-    try {
-      const decoded = decodeURIComponent(trimmed);
-      if (decoded && decoded !== trimmed) {
-        queue.push(decoded);
-      }
-    } catch (error) {
-      // ignore decode errors
-    }
-
-    if (typeof window !== 'undefined' && typeof window.atob === 'function') {
-      try {
-        const base64Decoded = window.atob(trimmed);
-        if (base64Decoded && base64Decoded !== trimmed) {
-          queue.push(base64Decoded);
-        }
-      } catch (error) {
-        // ignore base64 errors
-      }
-    }
-  }
-
-  return null;
-};
-
-const TELEGRAM_WIDGET_PARAM_KEYS = [
-  'id',
-  'first_name',
-  'last_name',
-  'username',
-  'photo_url',
-  'auth_date',
-  'hash',
-  'state',
-];
-
-const extractWidgetAuthFromParams = (params) => {
-  if (!params) {
-    return null;
-  }
-  const hash = params.get('hash');
-  const id = params.get('id');
-  const authDate = params.get('auth_date');
-  if (!hash || !id || !authDate) {
-    return null;
-  }
-
-  const filtered = new URLSearchParams();
-  TELEGRAM_WIDGET_PARAM_KEYS.forEach((key) => {
-    const value = params.get(key);
-    if (value !== null && value !== undefined && value !== '') {
-      filtered.set(key, value);
-    }
-  });
-
-  if (!filtered.get('id') || !filtered.get('hash') || !filtered.get('auth_date')) {
-    return null;
-  }
-
-  return {
-    initData: filtered.toString(),
-    user: {
-      id: filtered.get('id'),
-      first_name: filtered.get('first_name') || undefined,
-      last_name: filtered.get('last_name') || undefined,
-      username: filtered.get('username') || undefined,
-      photo_url: filtered.get('photo_url') || undefined,
-    },
-  };
-};
-
-const resolveTelegramInitData = () => {
-  if (typeof window === 'undefined') {
-    telegramWebAppAvailable.value = false;
-    return { initData: '', user: null, source: 'none' };
-  }
-
-  const webApp = window.Telegram?.WebApp;
-  if (webApp && typeof webApp === 'object' && typeof webApp.initData === 'string' && webApp.initData.trim()) {
-    telegramWebAppAvailable.value = true;
-    return { initData: webApp.initData, user: webApp.initDataUnsafe?.user || null, source: 'webapp' };
-  }
-
-  const searchParams = new URLSearchParams(window.location.search || '');
-  const searchInitData = searchParams.get('tgWebAppInitData') || searchParams.get('initData');
-  if (searchInitData) {
-    telegramWebAppAvailable.value = true;
-    return { initData: searchInitData, user: decodeTelegramUser(searchInitData), source: 'query' };
-  }
-
-  const hashRaw = typeof window.location?.hash === 'string' ? window.location.hash.slice(1) : '';
-  if (hashRaw) {
-    const hashParams = new URLSearchParams(hashRaw);
-    const hashInitData = hashParams.get('tgWebAppData') || hashParams.get('tgWebAppInitData');
-    if (hashInitData) {
-      telegramWebAppAvailable.value = true;
-      return { initData: hashInitData, user: decodeTelegramUser(hashInitData), source: 'hash' };
-    }
-    const widgetFromHash = extractWidgetAuthFromParams(hashParams);
-    if (widgetFromHash) {
-      telegramWebAppAvailable.value = false;
-      return { ...widgetFromHash, source: 'widget-hash' };
-    }
-  }
-
-  const widgetFromSearch = extractWidgetAuthFromParams(searchParams);
-  if (widgetFromSearch) {
-    telegramWebAppAvailable.value = false;
-    return { ...widgetFromSearch, source: 'widget-query' };
-  }
-
-  telegramWebAppAvailable.value = false;
-  return { initData: '', user: null, source: 'none' };
-};
-
-const loginWithInitData = async (initData, fallbackUser = null) => {
-  const normalized = typeof initData === 'string' ? initData.trim() : '';
-  if (!normalized) {
-    loginError.value = 'Telegram не передал данные для авторизации.';
-    return;
-  }
-
-  loginPending.value = true;
-  loginError.value = '';
-
-  try {
-    const response = await fetch(buildApiUrl('/auth/login'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ initData: normalized }),
-    });
-
-    if (!response.ok) {
-      throw new Error(await parseErrorResponse(response));
-    }
-
-    const data = await response.json();
-    const resolvedUser = resolveTelegramUser(
-      data?.user,
-      fallbackUser,
-      decodeTelegramUser(normalized),
-      telegramUser.value,
-    );
-    isAuthenticated.value = true;
-    telegramUser.value = resolvedUser;
-    showFeedback('success', 'Вы успешно вошли в админку');
-    await fetchGroups();
-  } catch (error) {
-    console.error('Failed to authorize via Telegram', error);
-    loginError.value =
-      error instanceof Error && error.message
-        ? error.message
-        : 'Не удалось авторизоваться через Telegram';
-  } finally {
-    loginPending.value = false;
-  }
-};
-
-const handleTelegramLogin = async () => {
-  loginError.value = '';
-
-  const { initData, user } = resolveTelegramInitData();
-
-  if (!initData || !initData.trim()) {
-    if (telegramWebAppAvailable.value) {
-      loginError.value = 'Telegram не передал данные для авторизации.';
-    } else if (externalLoginAvailable.value) {
-      loginError.value = 'Используйте кнопку входа через Telegram ниже.';
-    } else {
-      loginError.value =
-        'Внешняя авторизация Telegram не настроена. Откройте панель внутри Telegram или обратитесь к администратору.';
-    }
-    return;
-  }
-
-  await loginWithInitData(initData, user);
-};
-
-const handleExternalAuthPayload = async (payload) => {
-  if (!payload || typeof payload !== 'object') {
-    loginError.value = 'Telegram не передал данные для авторизации.';
-    return;
-  }
-
-  const params = new URLSearchParams();
-  Object.entries(payload).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === '') {
-      return;
-    }
-    params.set(key, String(value));
-  });
-
-  if (!params.toString()) {
-    loginError.value = 'Telegram не передал данные для авторизации.';
-    return;
-  }
-
-  await loginWithInitData(params.toString(), payload);
-};
-
-const mountExternalTelegramWidget = () => {
-  if (!externalLoginAvailable.value || typeof window === 'undefined') {
-    return;
-  }
-
-  const container = telegramLoginContainer.value;
-  if (!container) {
-    return;
-  }
-
-  const username = telegramBotUsername.value.trim();
-  if (!username) {
-    return;
-  }
-
-  container.innerHTML = '';
-  externalLoginError.value = '';
-
-  const script = document.createElement('script');
-  script.src = 'https://telegram.org/js/telegram-widget.js?22';
-  script.async = true;
-  script.setAttribute('data-telegram-login', username);
-  script.setAttribute('data-size', 'large');
-  script.setAttribute('data-userpic', 'false');
-  script.setAttribute('data-request-access', 'write');
-  script.setAttribute('data-lang', 'ru');
-  script.setAttribute('data-radius', '6');
-  script.setAttribute('data-onauth', '__karticaOnTelegramAuth');
-  script.onerror = () => {
-    externalLoginError.value =
-      'Не удалось загрузить виджет Telegram. Проверьте подключение к сети и настройки бота.';
-  };
-
-  container.appendChild(script);
-};
-
-if (typeof window !== 'undefined') {
-  window.__karticaOnTelegramAuth = (authData) => {
-    handleExternalAuthPayload(authData);
-  };
-}
-
-watch(
-  [() => telegramLoginContainer.value, () => telegramWebAppAvailable.value, () => isAuthenticated.value],
-  ([container, webAppAvailable, authenticated]) => {
-    if (!container) {
-      return;
-    }
-    if (authenticated) {
-      container.innerHTML = '';
-      return;
-    }
-    if (!webAppAvailable && externalLoginAvailable.value) {
-      mountExternalTelegramWidget();
-    }
-  },
-  { immediate: true }
-);
-
-watch(
-  () => externalLoginAvailable.value,
-  (available) => {
-    if (available && !isAuthenticated.value && !telegramWebAppAvailable.value) {
-      mountExternalTelegramWidget();
-    }
-  }
-);
-
-const adminUserLabel = computed(() => {
-  const user = telegramUser.value;
-  if (!user || typeof user !== 'object') {
-    return '';
-  }
-
-  const normalize = (value) => (typeof value === 'string' ? value.trim() : '');
-  const firstName = normalize(user.first_name ?? user.firstName);
-  const lastName = normalize(user.last_name ?? user.lastName);
-  const username = normalize(user.username);
-  const nameParts = [firstName, lastName].filter(Boolean);
-
-  if (nameParts.length && username) {
-    return `${nameParts.join(' ')} (@${username})`;
-  }
-  if (nameParts.length) {
-    return nameParts.join(' ');
-  }
-  if (username) {
-    return `@${username}`;
-  }
-  if (user.id !== undefined && user.id !== null) {
-    return `ID ${user.id}`;
-  }
-  return '';
-});
-
-const logout = async () => {
-  try {
-    await fetch(buildApiUrl('/auth/logout'), {
-      method: 'POST',
-      credentials: 'include',
-    });
-  } catch (error) {
-    console.warn('Не удалось корректно завершить сессию администратора', error);
-  } finally {
-    clearAuthState();
-    showFeedback('success', 'Вы вышли из админки');
-    resolveTelegramInitData();
-  }
-};
-
 const createGroup = async () => {
-  if (!newGroupForm.title.trim()) {
-    showFeedback('error', 'Введите название группы');
+  if (newGroupSaving.value) return;
+  const title = newGroupForm.title.trim();
+  const description = newGroupForm.description.trim();
+  if (!title) {
+    showFeedback('error', 'Укажите название группы');
     return;
   }
   newGroupSaving.value = true;
   try {
     const response = await fetch(buildApiUrl('/groups'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        title: newGroupForm.title.trim(),
-        description: newGroupForm.description.trim(),
-      }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...createAuthHeaders(),
+      },
+      body: JSON.stringify({ title, description }),
     });
     if (!response.ok) {
       throw new Error(await parseErrorResponse(response));
@@ -1009,7 +671,6 @@ const createGroup = async () => {
     newGroupForm.title = '';
     newGroupForm.description = '';
     showFeedback('success', 'Группа создана');
-    await handleSelectGroup(data.id);
   } catch (error) {
     console.error('Failed to create group', error);
     showFeedback('error', error.message || 'Не удалось создать группу');
@@ -1024,35 +685,31 @@ const saveGroupDetails = async () => {
     showFeedback('error', OWNERSHIP_ERROR_MESSAGE);
     return;
   }
-  if (!groupForm.title.trim()) {
-    showFeedback('error', 'Название группы не может быть пустым');
-    return;
-  }
   groupSaving.value = true;
   try {
     const response = await fetch(buildApiUrl(`/groups/${activeGroup.value.id}`), {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...createAuthHeaders(),
+      },
       body: JSON.stringify({
-        title: groupForm.title.trim(),
-        description: groupForm.description.trim(),
+        title: groupForm.title,
+        description: groupForm.description,
       }),
     });
     if (!response.ok) {
       throw new Error(await parseErrorResponse(response));
     }
     const data = await response.json();
-    const normalized = {
+    updateGroupInList(data);
+    activeGroup.value = {
       ...activeGroup.value,
       ...data,
-      ownerId: data.ownerId ?? data.owner_id ?? activeGroup.value?.ownerId ?? null,
     };
-    activeGroup.value = normalized;
-    updateGroupInList(normalized);
-    showFeedback('success', 'Данные группы сохранены');
+    showFeedback('success', 'Группа обновлена');
   } catch (error) {
-    console.error('Failed to update group', error);
+    console.error('Failed to save group', error);
     showFeedback('error', error.message || 'Не удалось сохранить группу');
   } finally {
     groupSaving.value = false;
@@ -1065,28 +722,23 @@ const deleteGroup = async () => {
     showFeedback('error', OWNERSHIP_ERROR_MESSAGE);
     return;
   }
-  const groupId = activeGroup.value.id;
-  const confirmationMessage = `Удалить группу «${activeGroup.value.title || 'Без названия'}»?`;
-  const confirmed =
-    typeof window === 'undefined' ? true : window.confirm(`${confirmationMessage}\nЭто действие нельзя отменить.`);
-  if (!confirmed) {
+  if (typeof window !== 'undefined' && !window.confirm('Удалить группу и все её карточки?')) {
     return;
   }
-
   groupDeleting.value = true;
   try {
-    const response = await fetch(buildApiUrl(`/groups/${groupId}`), {
+    const response = await fetch(buildApiUrl(`/groups/${activeGroup.value.id}`), {
       method: 'DELETE',
-      credentials: 'include',
+      headers: {
+        ...createAuthHeaders(),
+      },
     });
-    if (!response.ok) {
+    if (!response.ok && response.status !== 204) {
       throw new Error(await parseErrorResponse(response));
     }
-
-    removeGroupFromList(groupId);
+    removeGroupFromList(activeGroup.value.id);
     resetActiveGroup();
     showFeedback('success', 'Группа удалена');
-    await fetchGroups();
   } catch (error) {
     console.error('Failed to delete group', error);
     showFeedback('error', error.message || 'Не удалось удалить группу');
@@ -1106,8 +758,10 @@ const saveCards = async () => {
     const parsedCards = parseCardsText(cardsText.value);
     const response = await fetch(buildApiUrl(`/groups/${activeGroup.value.id}/cards`), {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...createAuthHeaders(),
+      },
       body: JSON.stringify({
         cards: parsedCards.map((card) => ({
           term: card.term,
@@ -1151,63 +805,208 @@ const retryActiveGroup = () => {
   }
 };
 
-const restoreSession = async () => {
+const extractTokenFromUrl = () => {
+  if (typeof window === 'undefined') {
+    return '';
+  }
   try {
-    const response = await fetch(buildApiUrl('/auth/verify'), {
-      credentials: 'include',
+    const url = new URL(window.location.href);
+    const searchToken = url.searchParams.get('token');
+    if (searchToken) {
+      return searchToken;
+    }
+  } catch (error) {
+    // ignore URL parse errors
+  }
+
+  const { search, hash, pathname, href } = window.location;
+
+  if (search) {
+    const params = new URLSearchParams(search);
+    const token = params.get('token');
+    if (token) {
+      return token;
+    }
+  }
+
+  if (hash && hash.length > 1) {
+    const hashParams = new URLSearchParams(hash.slice(1));
+    const token = hashParams.get('token');
+    if (token) {
+      return token;
+    }
+  }
+
+  const pathMatch = pathname.match(/&token=([^/?#]+)/i);
+  if (pathMatch) {
+    return decodeURIComponent(pathMatch[1]);
+  }
+
+  const hrefMatch = href.match(/[?&]token=([^&#]+)/i);
+  if (hrefMatch) {
+    return decodeURIComponent(hrefMatch[1]);
+  }
+
+  return '';
+};
+
+const stripTokenFromUrl = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('token');
+    let pathname = url.pathname.replace(/&token=[^/?#]*/i, '');
+    if (!pathname) {
+      pathname = '/';
+    }
+    let hash = url.hash;
+    if (hash && hash.includes('token=')) {
+      const hashParams = new URLSearchParams(hash.slice(1));
+      hashParams.delete('token');
+      const normalized = hashParams.toString();
+      hash = normalized ? `#${normalized}` : '';
+    }
+    const searchString = url.searchParams.toString();
+    const search = searchString ? `?${searchString}` : '';
+    const cleanedUrl = `${url.origin}${pathname}${search}${hash}`;
+    window.history.replaceState({}, '', cleanedUrl);
+  } catch (error) {
+    const cleaned = window.location.href
+      .replace(/([?&])token=[^&#]*&?/, '$1')
+      .replace(/([?&])$/, '')
+      .replace(/&token=[^#?]*/, '');
+    window.history.replaceState({}, '', cleaned);
+  }
+};
+
+const establishSession = async (token, options = {}) => {
+  const { persist = true, silent = false } = options;
+  if (!token) {
+    if (!silent) {
+      authError.value = 'Укажите токен доступа.';
+    }
+    return false;
+  }
+  if (!silent) {
+    tokenCheckPending.value = true;
+    authError.value = '';
+    manualTokenError.value = '';
+  }
+  try {
+    const response = await fetch(buildApiUrl('/auth/session'), {
+      headers: {
+        Accept: 'application/json',
+        ...createAuthHeaders(token),
+      },
     });
-
     if (!response.ok) {
-      clearAuthState();
-      return;
+      const message = await parseErrorResponse(response);
+      if (!silent) {
+        authError.value = message;
+      }
+      return false;
     }
-
-    let data = null;
-    try {
-      data = await response.json();
-    } catch (error) {
-      console.warn('Не удалось прочитать ответ проверки администратора', error);
-    }
-
+    const data = await response.json();
+    adminToken.value = token;
     isAuthenticated.value = true;
-    if (data && typeof data === 'object') {
-      telegramUser.value = resolveTelegramUser(data.user, telegramUser.value);
+    adminUser.value = data?.user || null;
+    const expiresAt =
+      data && typeof data.expiresAt === 'number' && Number.isFinite(data.expiresAt)
+        ? data.expiresAt
+        : null;
+    if (persist) {
+      storeToken(token, expiresAt);
+    } else {
+      tokenExpiresAt.value = expiresAt;
+    }
+    authError.value = '';
+    manualTokenError.value = '';
+    if (!silent) {
+      showFeedback('success', 'Доступ к админке открыт');
     }
     await fetchGroups();
+    return true;
   } catch (error) {
-    console.warn('Не удалось восстановить сессию администратора', error);
+    if (!silent) {
+      authError.value =
+        error instanceof Error && error.message
+          ? error.message
+          : 'Не удалось подтвердить токен. Попробуйте снова.';
+    }
+    return false;
+  } finally {
+    if (!silent) {
+      tokenCheckPending.value = false;
+    }
+  }
+};
+
+const submitManualToken = async () => {
+  manualTokenError.value = '';
+  authError.value = '';
+  const token = manualToken.value.trim();
+  if (!token) {
+    manualTokenError.value = 'Укажите токен, полученный в профиле.';
+    return;
+  }
+  const success = await establishSession(token, { persist: true, silent: false });
+  if (!success) {
+    manualTokenError.value = authError.value || 'Не удалось подтвердить токен. Проверьте ссылку.';
+  } else {
+    manualToken.value = '';
+  }
+};
+
+const logout = async () => {
+  try {
+    await fetch(buildApiUrl('/auth/logout'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...createAuthHeaders(),
+      },
+    });
+  } catch (error) {
+    console.warn('Failed to notify server about logout', error);
+  } finally {
+    showFeedback('success', 'Вы вышли из админки');
     clearAuthState();
   }
 };
 
-onMounted(async () => {
-  const initialAuth = resolveTelegramInitData();
-
-  await loadTelegramLoginConfig();
-
-  if (!telegramWebAppAvailable.value && externalLoginAvailable.value) {
-    await nextTick();
-    mountExternalTelegramWidget();
+const initializeAuth = async () => {
+  const tokenFromUrl = extractTokenFromUrl();
+  if (tokenFromUrl) {
+    const success = await establishSession(tokenFromUrl, { persist: true, silent: false });
+    stripTokenFromUrl();
+    if (!success) {
+      manualToken.value = tokenFromUrl;
+      manualTokenError.value = authError.value;
+    }
+    return;
   }
-
-  await restoreSession();
-
-  if (
-    !isAuthenticated.value &&
-    initialAuth.initData &&
-    typeof initialAuth.source === 'string' &&
-    initialAuth.source.startsWith('widget')
-  ) {
-    await loginWithInitData(initialAuth.initData, initialAuth.user);
+  const stored = loadStoredToken();
+  if (stored?.token) {
+    adminToken.value = stored.token;
+    if (stored.expiresAt) {
+      tokenExpiresAt.value = stored.expiresAt;
+    }
+    const success = await establishSession(stored.token, { persist: true, silent: true });
+    if (!success) {
+      clearAuthState();
+    }
   }
+};
+
+onMounted(() => {
+  initializeAuth();
 });
 
 onBeforeUnmount(() => {
   if (feedbackTimer) {
     clearTimeout(feedbackTimer);
-  }
-  if (typeof window !== 'undefined' && window.__karticaOnTelegramAuth) {
-    delete window.__karticaOnTelegramAuth;
   }
 });
 </script>
@@ -1256,26 +1055,19 @@ onBeforeUnmount(() => {
   color: #0f172a;
 }
 
+.token-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .pending-message {
   color: #4b5563;
 }
 
-.external-login-wrapper {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  margin-top: 8px;
-}
-
-.telegram-login-container {
-  display: flex;
-  justify-content: center;
-  width: 100%;
-}
-
-.telegram-login-container iframe {
-  max-width: 100%;
+.muted.small {
+  font-size: 14px;
+  color: #6b7280;
 }
 
 .admin-dashboard {
@@ -1340,21 +1132,17 @@ onBeforeUnmount(() => {
 .panel {
   background: #ffffff;
   border-radius: 16px;
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
   overflow: hidden;
 }
 
-.panel-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 24px;
-}
-
 .panel-header {
-  padding: 20px 24px 0;
+  padding: 20px 24px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .panel-header h2 {
@@ -1364,30 +1152,29 @@ onBeforeUnmount(() => {
   color: #0f172a;
 }
 
-.panel-subtitle {
-  margin: 0;
-  font-size: 14px;
-  color: #6b7280;
-}
-
-.panel-meta {
-  font-size: 14px;
-  color: #6b7280;
-}
-
 .panel-body {
-  padding: 16px 24px 24px;
+  padding: 24px;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
 .panel-footer {
-  padding-top: 8px;
+  margin-top: 16px;
   display: flex;
-  flex-wrap: wrap;
   gap: 12px;
-  align-items: center;
+}
+
+.panel-meta {
+  font-size: 14px;
+  color: #6366f1;
+  font-weight: 600;
+}
+
+.panel-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #6b7280;
 }
 
 .form-vertical {
@@ -1399,118 +1186,87 @@ onBeforeUnmount(() => {
 .form-field {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  font-size: 14px;
+  gap: 6px;
 }
 
 .form-field input,
 .form-field textarea {
   width: 100%;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid #d1d5db;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
   font-size: 15px;
-  font-family: inherit;
+  background: #f9fafb;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .form-field input:focus,
 .form-field textarea:focus {
   outline: none;
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
-}
-
-.form-error {
-  color: #dc2626;
-  font-size: 14px;
-  margin: 0;
-}
-
-.muted {
-  color: #6b7280;
-  margin: 0;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+  background: #ffffff;
 }
 
 .primary-button,
 .ghost-button,
 .danger-button {
+  padding: 12px 20px;
+  border-radius: 12px;
   border: none;
-  border-radius: 10px;
-  padding: 10px 18px;
-  font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
-  font-family: inherit;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 
 .primary-button {
-  background: #2563eb;
+  background: linear-gradient(135deg, #4f46e5, #2563eb);
   color: #ffffff;
-  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.35);
+  box-shadow: 0 12px 30px rgba(79, 70, 229, 0.35);
 }
 
 .primary-button:disabled {
   opacity: 0.6;
-  cursor: default;
+  cursor: not-allowed;
   box-shadow: none;
 }
 
-.primary-button:not(:disabled):hover {
-  transform: translateY(-1px);
-  box-shadow: 0 16px 32px rgba(37, 99, 235, 0.35);
-}
-
 .ghost-button {
-  background: #f3f4f6;
+  background: transparent;
+  border: 1px solid rgba(148, 163, 184, 0.5);
   color: #1f2937;
-  box-shadow: inset 0 0 0 1px #d1d5db;
 }
 
-.ghost-button:hover {
-  background: #e5e7eb;
-}
-
-.ghost-button:disabled {
-  opacity: 0.5;
-  cursor: default;
+.ghost-button:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.12);
 }
 
 .danger-button {
-  background: #dc2626;
+  background: linear-gradient(135deg, #dc2626, #ef4444);
   color: #ffffff;
-  box-shadow: 0 12px 24px rgba(220, 38, 38, 0.3);
+  box-shadow: 0 12px 30px rgba(220, 38, 38, 0.35);
 }
 
 .danger-button:disabled {
   opacity: 0.6;
-  cursor: default;
+  cursor: not-allowed;
   box-shadow: none;
-}
-
-.danger-button:not(:disabled):hover {
-  transform: translateY(-1px);
-  box-shadow: 0 16px 32px rgba(220, 38, 38, 0.3);
-  background: #b91c1c;
 }
 
 .group-list {
   list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 0;
-  margin: 0;
-  max-height: 420px;
-  overflow-y: auto;
 }
 
 .group-list-item button {
   width: 100%;
   text-align: left;
-  background: transparent;
-  border: none;
+  background: #f8fafc;
+  border: 1px solid transparent;
   padding: 12px 14px;
   border-radius: 12px;
   cursor: pointer;
@@ -1602,6 +1358,15 @@ textarea {
   opacity: 0;
 }
 
+.form-error {
+  color: #dc2626;
+  font-size: 14px;
+}
+
+.muted {
+  color: #6b7280;
+}
+
 .ownership-note {
   margin: 0;
   font-size: 14px;
@@ -1632,6 +1397,20 @@ textarea {
 
   .admin-main {
     order: 1;
+  }
+
+  .admin-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 20px;
+  }
+
+  .admin-header__actions {
+    width: 100%;
+  }
+
+  .admin-header__actions button {
+    flex: 1;
   }
 }
 </style>

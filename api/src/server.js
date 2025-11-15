@@ -1,15 +1,11 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const crypto = require('crypto');
-const https = require('https');
 
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
-const SESSION_COOKIE_NAME = 'kartica_admin_session';
-const SESSION_TTL_MS = Math.max(parseInt(process.env.ADMIN_SESSION_TTL_MS, 10) || 1000 * 60 * 30, 1000 * 60 * 5);
-const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production';
-const COOKIE_SAME_SITE = process.env.ADMIN_COOKIE_SAME_SITE || 'Lax';
+
 const TELEGRAM_BOT_TOKEN = (process.env.ADMIN_TELEGRAM_BOT_TOKEN || '').trim();
 const TELEGRAM_ALLOWED_USER_IDS = (process.env.ADMIN_TELEGRAM_ALLOWED_USER_IDS || '')
   .split(',')
@@ -19,10 +15,11 @@ const TELEGRAM_LOGIN_MAX_AGE_SECONDS = Math.max(
   parseInt(process.env.ADMIN_TELEGRAM_LOGIN_MAX_AGE_SECONDS, 10) || 600,
   60,
 );
-const TELEGRAM_BOT_INFO_CACHE_MS = Math.max(
-  parseInt(process.env.ADMIN_TELEGRAM_BOT_INFO_CACHE_MS, 10) || 10 * 60 * 1000,
-  60 * 1000,
-);
+
+const ADMIN_TOKEN_SECRET = (process.env.ADMIN_TOKEN_SECRET || '').trim();
+const ADMIN_TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const ADMIN_TOKEN_HEADER = { alg: 'HS256', typ: 'JWT' };
+
 const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
@@ -43,129 +40,64 @@ const STATIC_ALLOWED_ORIGINS = (configuredAllowedOriginsRaw
 
 const hasExplicitAllowedOrigins = Boolean(configuredAllowedOriginsRaw);
 
-const activeSessions = new Map();
 const ADMIN_GROUP_OWNERSHIP_ERROR = 'Можно изменять только созданные вами группы';
 
-let cachedTelegramBotUsername = '';
-let telegramBotUsernameExpiresAt = 0;
-let pendingTelegramBotUsernamePromise = null;
+app.use(express.json());
 
-const fetchTelegramBotUsernameFromApi = () => {
-  if (!TELEGRAM_BOT_TOKEN) {
-    return Promise.resolve('');
+app.use((req, res, next) => {
+  const originHeader = req.headers.origin;
+  let allowedOrigin = '';
+
+  if (originHeader && STATIC_ALLOWED_ORIGINS.includes(originHeader)) {
+    allowedOrigin = originHeader;
+  } else if (originHeader && !hasExplicitAllowedOrigins) {
+    allowedOrigin = originHeader;
+  } else if (STATIC_ALLOWED_ORIGINS.length) {
+    [allowedOrigin] = STATIC_ALLOWED_ORIGINS;
   }
 
-  const apiUrl = new URL(`/bot${TELEGRAM_BOT_TOKEN}/getMe`, 'https://api.telegram.org');
-
-  return new Promise((resolve, reject) => {
-    const request = https.get(apiUrl, (response) => {
-      if (response.statusCode && (response.statusCode < 200 || response.statusCode >= 300)) {
-        response.resume();
-        reject(
-          new Error(
-            `Telegram API вернул код ${response.statusCode} при попытке получить имя бота`,
-          ),
-        );
-        return;
+  if (allowedOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  }
+  if (originHeader) {
+    const existingVary = res.getHeader('Vary');
+    if (!existingVary) {
+      res.setHeader('Vary', 'Origin');
+    } else if (Array.isArray(existingVary)) {
+      if (!existingVary.includes('Origin')) {
+        res.setHeader('Vary', [...existingVary, 'Origin']);
       }
-
-      const chunks = [];
-      response.on('data', (chunk) => {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      });
-      response.on('end', () => {
-        try {
-          const body = Buffer.concat(chunks).toString('utf-8');
-          const parsed = body ? JSON.parse(body) : null;
-          const username = parsed?.result?.username || parsed?.result?.user?.username || '';
-          if (parsed?.ok && username) {
-            resolve(String(username));
-          } else {
-            reject(new Error('Telegram API не вернул имя бота. Проверьте токен.'));
-          }
-        } catch (error) {
-          reject(error);
-        }
-      });
-    });
-
-    request.setTimeout(5000, () => {
-      request.destroy(new Error('Не удалось получить имя бота Telegram: таймаут запроса.'));
-    });
-
-    request.on('error', (error) => {
-      reject(error);
-    });
-  });
-};
-
-const getTelegramBotUsername = () => {
-  if (!TELEGRAM_BOT_TOKEN) {
-    return Promise.resolve('');
-  }
-
-  const now = Date.now();
-  if (cachedTelegramBotUsername && telegramBotUsernameExpiresAt > now) {
-    return Promise.resolve(cachedTelegramBotUsername);
-  }
-
-  if (pendingTelegramBotUsernamePromise) {
-    return pendingTelegramBotUsernamePromise;
-  }
-
-  pendingTelegramBotUsernamePromise = fetchTelegramBotUsernameFromApi()
-    .then((username) => {
-      cachedTelegramBotUsername = typeof username === 'string' ? username.trim() : '';
-      telegramBotUsernameExpiresAt = Date.now() + TELEGRAM_BOT_INFO_CACHE_MS;
-      return cachedTelegramBotUsername;
-    })
-    .catch((error) => {
-      cachedTelegramBotUsername = '';
-      telegramBotUsernameExpiresAt = Date.now() + Math.min(TELEGRAM_BOT_INFO_CACHE_MS, 60 * 1000);
-      throw error;
-    })
-    .finally(() => {
-      pendingTelegramBotUsernamePromise = null;
-    });
-
-  return pendingTelegramBotUsernamePromise;
-};
-
-const decodePossibleJson = (value) => {
-  if (!value || typeof value !== 'string') {
-    return null;
-  }
-  try {
-    const decoded = decodeURIComponent(value);
-    if (decoded && decoded !== value) {
-      return decodePossibleJson(decoded);
+    } else if (typeof existingVary === 'string') {
+      const parts = existingVary.split(/,\s*/).filter(Boolean);
+      if (!parts.includes('Origin')) {
+        parts.push('Origin');
+        res.setHeader('Vary', parts.join(', '));
+      }
     }
-  } catch (error) {
-    // ignore URI errors
   }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
   }
+  return next();
+});
 
-  try {
-    return JSON.parse(trimmed);
-  } catch (error) {
-    // ignore invalid JSON
-  }
+const toBase64Url = (value) =>
+  Buffer.from(value)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
 
-  try {
-    const base64Decoded = Buffer.from(trimmed, 'base64').toString('utf-8');
-    if (base64Decoded && base64Decoded !== trimmed) {
-      return decodePossibleJson(base64Decoded);
-    }
-  } catch (error) {
-    // ignore base64 errors
-  }
-
-  return null;
+const fromBase64UrlToBuffer = (value) => {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padding = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
+  return Buffer.from(normalized + padding, 'base64');
 };
+
+const fromBase64Url = (value) => fromBase64UrlToBuffer(value).toString('utf-8');
 
 const buildInitDataQueryString = (initData) => {
   if (!initData || typeof initData !== 'string') {
@@ -190,23 +122,27 @@ const buildInitDataQueryString = (initData) => {
     return raw;
   }
 
-  const parsedJson = decodePossibleJson(raw);
-  if (parsedJson && typeof parsedJson === 'object') {
-    const params = new URLSearchParams();
-    Object.entries(parsedJson).forEach(([key, value]) => {
-      if (value === undefined || value === null) {
-        return;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      const params = new URLSearchParams();
+      Object.entries(parsed).forEach(([key, value]) => {
+        if (value === undefined || value === null) {
+          return;
+        }
+        if (typeof value === 'object') {
+          params.set(key, JSON.stringify(value));
+        } else {
+          params.set(key, String(value));
+        }
+      });
+      const result = params.toString();
+      if (result) {
+        return result;
       }
-      if (typeof value === 'object') {
-        params.set(key, JSON.stringify(value));
-      } else {
-        params.set(key, String(value));
-      }
-    });
-    const result = params.toString();
-    if (result) {
-      return result;
     }
+  } catch (error) {
+    // ignore JSON errors
   }
 
   try {
@@ -300,8 +236,7 @@ const verifyTelegramLogin = (initDataRaw) => {
 
   const { hash, dataCheckString, authDate, user, authSource } = parseTelegramInitData(initDataRaw);
 
-  const secretSeed =
-    authSource === 'widget' ? TELEGRAM_BOT_TOKEN : `WebAppData${TELEGRAM_BOT_TOKEN}`;
+  const secretSeed = authSource === 'widget' ? TELEGRAM_BOT_TOKEN : `WebAppData${TELEGRAM_BOT_TOKEN}`;
   const secretKey = crypto.createHash('sha256').update(secretSeed).digest();
   const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
@@ -334,115 +269,133 @@ const verifyTelegramLogin = (initDataRaw) => {
   return { user: normalizedUser, authDate };
 };
 
-const extractTelegramUserId = (user) => {
-  const normalized = normalizeTelegramUser(user);
-  if (!normalized || typeof normalized.id !== 'string') {
-    return '';
+const generateAdminToken = (user) => {
+  if (!ADMIN_TOKEN_SECRET) {
+    throw new Error('ADMIN_TOKEN_SECRET не настроен на сервере');
   }
-  return normalized.id.trim();
+  const issuedAtSeconds = Math.floor(Date.now() / 1000);
+  const expiresAtSeconds = issuedAtSeconds + Math.floor(ADMIN_TOKEN_TTL_MS / 1000);
+
+  const payload = {
+    sub: user.id,
+    iat: issuedAtSeconds,
+    exp: expiresAtSeconds,
+    iss: 'kartica-admin',
+    user,
+  };
+
+  const encodedHeader = toBase64Url(JSON.stringify(ADMIN_TOKEN_HEADER));
+  const encodedPayload = toBase64Url(JSON.stringify(payload));
+  const data = `${encodedHeader}.${encodedPayload}`;
+  const signature = crypto
+    .createHmac('sha256', ADMIN_TOKEN_SECRET)
+    .update(data)
+    .digest();
+  const encodedSignature = toBase64Url(signature);
+
+  return {
+    token: `${data}.${encodedSignature}`,
+    expiresAt: expiresAtSeconds * 1000,
+  };
 };
 
-app.use(express.json());
-
-app.use((req, res, next) => {
-  const originHeader = req.headers.origin;
-  let allowedOrigin = '';
-
-  if (originHeader && STATIC_ALLOWED_ORIGINS.includes(originHeader)) {
-    allowedOrigin = originHeader;
-  } else if (originHeader && !hasExplicitAllowedOrigins) {
-    allowedOrigin = originHeader;
-  } else if (STATIC_ALLOWED_ORIGINS.length) {
-    [allowedOrigin] = STATIC_ALLOWED_ORIGINS;
+const verifyAdminToken = (token) => {
+  if (!token || typeof token !== 'string') {
+    throw new Error('Токен администратора не передан');
+  }
+  if (!ADMIN_TOKEN_SECRET) {
+    throw new Error('ADMIN_TOKEN_SECRET не настроен на сервере');
   }
 
-  if (allowedOrigin) {
-    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  const parts = token.split('.');
+  if (parts.length !== 3) {
+    throw new Error('Неверный формат токена администратора');
   }
-  if (originHeader) {
-    const existingVary = res.getHeader('Vary');
-    if (!existingVary) {
-      res.setHeader('Vary', 'Origin');
-    } else if (Array.isArray(existingVary)) {
-      if (!existingVary.includes('Origin')) {
-        res.setHeader('Vary', [...existingVary, 'Origin']);
-      }
-    } else if (typeof existingVary === 'string') {
-      const parts = existingVary.split(/,\s*/).filter(Boolean);
-      if (!parts.includes('Origin')) {
-        parts.push('Origin');
-        res.setHeader('Vary', parts.join(', '));
-      }
+
+  const [encodedHeader, encodedPayload, signaturePart] = parts;
+  const data = `${encodedHeader}.${encodedPayload}`;
+  const expectedSignature = crypto
+    .createHmac('sha256', ADMIN_TOKEN_SECRET)
+    .update(data)
+    .digest();
+
+  let providedSignature;
+  try {
+    providedSignature = fromBase64UrlToBuffer(signaturePart);
+  } catch (error) {
+    throw new Error('Неверный формат подписи токена администратора');
+  }
+
+  if (
+    expectedSignature.length !== providedSignature.length ||
+    !crypto.timingSafeEqual(expectedSignature, providedSignature)
+  ) {
+    throw new Error('Не удалось подтвердить токен администратора');
+  }
+
+  let header;
+  let payload;
+  try {
+    header = JSON.parse(fromBase64Url(encodedHeader));
+    payload = JSON.parse(fromBase64Url(encodedPayload));
+  } catch (error) {
+    throw new Error('Не удалось разобрать токен администратора');
+  }
+
+  if (!header || header.alg !== 'HS256') {
+    throw new Error('Неподдерживаемый алгоритм подписи токена администратора');
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Неверная структура токена администратора');
+  }
+
+  if (!payload.sub) {
+    throw new Error('Токен администратора не содержит идентификатор пользователя');
+  }
+
+  if (payload.exp && Number.isFinite(payload.exp)) {
+    const expiresAtMs = Number(payload.exp) * 1000;
+    if (expiresAtMs < Date.now()) {
+      throw new Error('Токен администратора истёк');
     }
   }
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
-  return next();
-});
 
-function setSessionCookie(res, token, ttlMs = SESSION_TTL_MS) {
-  const maxAgeSeconds = Math.max(Math.floor(ttlMs / 1000), 0);
-  const cookieParts = [
-    `${SESSION_COOKIE_NAME}=${token}`,
-    'Path=/',
-    'HttpOnly',
-    `Max-Age=${maxAgeSeconds}`,
-    `SameSite=${COOKIE_SAME_SITE}`,
-  ];
-  if (COOKIE_SECURE) {
-    cookieParts.push('Secure');
-  }
-  res.setHeader('Set-Cookie', cookieParts.join('; '));
-}
+  return payload;
+};
 
-function clearSessionCookie(res) {
-  const cookieParts = [
-    `${SESSION_COOKIE_NAME}=`,
-    'Path=/',
-    'HttpOnly',
-    'Max-Age=0',
-    `SameSite=${COOKIE_SAME_SITE}`,
-  ];
-  if (COOKIE_SECURE) {
-    cookieParts.push('Secure');
+const getAdminTokenFromRequest = (req) => {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ')) {
+    return authHeader.slice(7).trim();
   }
-  res.setHeader('Set-Cookie', cookieParts.join('; '));
-}
-
-function getSessionTokenFromRequest(req) {
-  const cookieHeader = req.headers.cookie;
-  if (!cookieHeader) {
-    return '';
-  }
-
-  const cookies = cookieHeader.split(';').map((chunk) => chunk.trim());
-  for (const cookie of cookies) {
-    if (!cookie) continue;
-    const [name, value] = cookie.split('=');
-    if (name === SESSION_COOKIE_NAME) {
-      return value || '';
-    }
+  if (typeof req.headers['x-admin-token'] === 'string') {
+    return req.headers['x-admin-token'].trim();
   }
   return '';
-}
+};
 
-function getActiveSession(token) {
-  if (!token) {
-    return null;
+function requireAdmin(req, res, next) {
+  let payload;
+  try {
+    const token = getAdminTokenFromRequest(req);
+    payload = verifyAdminToken(token);
+    req.adminToken = token;
+  } catch (error) {
+    return res.status(401).json({ error: error.message || 'Unauthorized' });
   }
-  const session = activeSessions.get(token);
-  if (!session) {
-    return null;
+
+  const normalizedUser = normalizeTelegramUser(payload.user);
+  const adminUserId = normalizedUser?.id || String(payload.sub || '').trim();
+  if (!adminUserId) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
-  if (session.expiresAt <= Date.now()) {
-    activeSessions.delete(token);
-    return null;
-  }
-  return session;
+
+  req.adminUser = normalizedUser || { id: adminUserId };
+  req.adminUserId = adminUserId;
+  req.adminTokenExpiresAt = payload.exp ? Number(payload.exp) * 1000 : null;
+
+  return next();
 }
 
 function getAdminUserId(req) {
@@ -452,149 +405,29 @@ function getAdminUserId(req) {
   if (typeof req.adminUserId === 'string' && req.adminUserId.trim()) {
     return req.adminUserId.trim();
   }
-  return extractTelegramUserId(req.adminUser);
+  return '';
 }
 
-function requireAdmin(req, res, next) {
-  const token = getSessionTokenFromRequest(req);
-  const session = getActiveSession(token);
-  if (!session) {
-    clearSessionCookie(res);
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  session.expiresAt = Date.now() + SESSION_TTL_MS;
-  setSessionCookie(res, token, SESSION_TTL_MS);
-  const normalizedUser = normalizeTelegramUser(session.user);
-  if (!normalizedUser || !normalizedUser.id) {
-    activeSessions.delete(token);
-    clearSessionCookie(res);
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  session.user = normalizedUser;
-  req.adminSessionToken = token;
-  req.adminUser = normalizedUser;
-  req.adminUserId = normalizedUser.id.trim();
-  return next();
-}
-
-async function ensureGroupOwnedByUser(groupId, userId) {
-  const group = await prisma.group.findUnique({
-    where: { id: groupId },
-    select: { id: true, ownerId: true },
-  });
-
-  if (!group) {
-    const error = new Error('Group not found');
-    error.statusCode = 404;
-    throw error;
-  }
-
-  if (!userId || group.ownerId !== userId) {
-    const error = new Error(ADMIN_GROUP_OWNERSHIP_ERROR);
-    error.statusCode = 403;
-    throw error;
-  }
-
-  return group;
-}
-
-app.get('/auth/telegram-config', async (req, res) => {
-  if (!TELEGRAM_BOT_TOKEN) {
-    return res.json({
-      botUsername: null,
-      externalLoginAvailable: false,
-      error: 'Telegram авторизация не настроена на сервере.',
-    });
-  }
-
-  try {
-    const username = await getTelegramBotUsername();
-    if (username) {
-      return res.json({ botUsername: username, externalLoginAvailable: true });
-    }
-    return res.json({
-      botUsername: null,
-      externalLoginAvailable: false,
-      error: 'Не удалось определить имя бота Telegram. Попробуйте позже.',
-    });
-  } catch (error) {
-    console.warn('Failed to resolve Telegram bot username', error);
-    return res.status(500).json({ error: 'Не удалось получить настройки Telegram' });
-  }
-});
-
-app.post('/auth/login', (req, res) => {
-  const initDataRaw = req.body?.initData;
-
-  if (!initDataRaw || typeof initDataRaw !== 'string' || !initDataRaw.trim()) {
-    return res.status(400).json({ error: 'Данные Telegram не переданы' });
-  }
-
-  try {
-    const { user } = verifyTelegramLogin(initDataRaw);
-    const normalizedUser = normalizeTelegramUser(user);
-
-    const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = Date.now() + SESSION_TTL_MS;
-
-    activeSessions.set(token, { expiresAt, user: normalizedUser });
-    setSessionCookie(res, token, SESSION_TTL_MS);
-
-    return res.json({ status: 'ok', expiresAt, user: normalizedUser });
-  } catch (error) {
-    console.warn('Telegram admin login failed', error);
-    const statusCode =
-      error && typeof error.message === 'string' && error.message === 'Telegram авторизация не настроена на сервере'
-        ? 500
-        : 401;
-    return res
-      .status(statusCode)
-      .json({ error: error.message || 'Не удалось авторизоваться через Telegram' });
-  }
-});
-
-app.post('/auth/logout', (req, res) => {
-  const token = getSessionTokenFromRequest(req);
-  if (token) {
-    activeSessions.delete(token);
-  }
-  clearSessionCookie(res);
-  return res.status(204).send();
-});
-
-app.get('/auth/verify', requireAdmin, (req, res) => {
-  const token = req.adminSessionToken;
-  const session = getActiveSession(token);
-  const user = normalizeTelegramUser(req.adminUser);
-  if (session && user) {
-    session.user = user;
-  }
-  res.json({ status: 'ok', expiresAt: session?.expiresAt, user: user || null });
-});
-
-function parsePagination(query) {
+const parsePagination = (query = {}) => {
   const page = Math.max(parseInt(query.page, 10) || 1, 1);
-  const pageSize = Math.max(Math.min(parseInt(query.pageSize, 10) || 10, 200), 1);
+  const pageSize = Math.min(Math.max(parseInt(query.pageSize, 10) || 20, 1), 200);
   const skip = (page - 1) * pageSize;
   return { page, pageSize, skip };
-}
+};
 
-function serializeGroupSummary(group) {
-  return {
-    id: group.id,
-    title: group.title,
-    description: group.description,
-    ownerId: group.ownerId || null,
-    createdAt: group.createdAt,
-    updatedAt: group.updatedAt,
-    cardsCount: group._count?.cards ?? group.cardsCount ?? 0,
-  };
-}
+const serializeGroupSummary = (group) => ({
+  id: group.id,
+  title: group.title,
+  description: group.description,
+  createdAt: group.createdAt,
+  updatedAt: group.updatedAt,
+  cardsCount: group._count?.cards ?? 0,
+  ownerId: group.ownerId ?? null,
+});
 
-function normalizeCardPayload(card, index) {
+const normalizeCardPayload = (card, index) => {
   if (!card || typeof card !== 'object') {
-    const error = new Error(`Card at position ${index + 1} is invalid`);
+    const error = new Error(`Card at position ${index + 1} is not an object`);
     error.statusCode = 400;
     throw error;
   }
@@ -623,6 +456,27 @@ function normalizeCardPayload(card, index) {
     example: example || null,
     image: image || null,
   };
+};
+
+async function ensureGroupOwnedByUser(groupId, userId) {
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { id: true, ownerId: true },
+  });
+
+  if (!group) {
+    const error = new Error('Group not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (!userId || group.ownerId !== userId) {
+    const error = new Error(ADMIN_GROUP_OWNERSHIP_ERROR);
+    error.statusCode = 403;
+    throw error;
+  }
+
+  return group;
 }
 
 async function replaceGroupCards(groupId, cardsPayload) {
@@ -647,6 +501,43 @@ async function replaceGroupCards(groupId, cardsPayload) {
     });
   });
 }
+
+app.post('/auth/token', (req, res) => {
+  const initDataRaw = req.body?.initData;
+
+  if (!initDataRaw || typeof initDataRaw !== 'string' || !initDataRaw.trim()) {
+    return res.status(400).json({ error: 'Данные Telegram не переданы' });
+  }
+
+  try {
+    const { user } = verifyTelegramLogin(initDataRaw);
+    const normalizedUser = normalizeTelegramUser(user);
+    const { token, expiresAt } = generateAdminToken(normalizedUser);
+
+    return res.json({ token, expiresAt, user: normalizedUser });
+  } catch (error) {
+    console.warn('Failed to issue admin token', error);
+    const statusCode =
+      error && typeof error.message === 'string' &&
+      error.message === 'Telegram авторизация не настроена на сервере'
+        ? 500
+        : 401;
+    return res
+      .status(statusCode)
+      .json({ error: error.message || 'Не удалось выдать токен администратора' });
+  }
+});
+
+app.get('/auth/session', requireAdmin, (req, res) => {
+  res.json({
+    user: req.adminUser,
+    expiresAt: req.adminTokenExpiresAt,
+  });
+});
+
+app.post('/auth/logout', (req, res) => {
+  res.status(204).send();
+});
 
 app.get('/groups', async (req, res) => {
   try {
