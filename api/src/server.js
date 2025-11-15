@@ -36,6 +36,7 @@ const ALLOWED_ORIGINS = (configuredAllowedOrigins
   .filter(Boolean);
 
 const activeSessions = new Map();
+const ADMIN_GROUP_OWNERSHIP_ERROR = 'Можно изменять только созданные вами группы';
 
 const decodePossibleJson = (value) => {
   if (!value || typeof value !== 'string') {
@@ -182,6 +183,23 @@ const parseTelegramInitData = (initDataRaw) => {
   return { hash, dataCheckString: entries.join('\n'), authDate, user, authSource };
 };
 
+const normalizeTelegramUser = (user) => {
+  if (!user || typeof user !== 'object') {
+    return null;
+  }
+
+  const normalized = { ...user };
+  if (normalized.id !== undefined && normalized.id !== null) {
+    normalized.id = String(normalized.id);
+  } else if (normalized.user && normalized.user.id !== undefined && normalized.user.id !== null) {
+    normalized.id = String(normalized.user.id);
+  } else {
+    normalized.id = '';
+  }
+
+  return normalized;
+};
+
 const verifyTelegramLogin = (initDataRaw) => {
   if (!TELEGRAM_BOT_TOKEN) {
     throw new Error('Telegram авторизация не настроена на сервере');
@@ -207,19 +225,28 @@ const verifyTelegramLogin = (initDataRaw) => {
     throw new Error('Сессия Telegram устарела, авторизуйтесь снова');
   }
 
-  if (!user || typeof user !== 'object' || !user.id) {
+  const normalizedUser = normalizeTelegramUser(user);
+
+  if (!normalizedUser || !normalizedUser.id) {
     throw new Error('Telegram не передал пользователя');
   }
 
   if (TELEGRAM_ALLOWED_USER_IDS.length) {
-    const userIdString = String(user.id);
-    const isAllowed = TELEGRAM_ALLOWED_USER_IDS.includes(userIdString);
+    const isAllowed = TELEGRAM_ALLOWED_USER_IDS.includes(normalizedUser.id);
     if (!isAllowed) {
       throw new Error('У вас нет доступа к админ-панели');
     }
   }
 
-  return { user, authDate };
+  return { user: normalizedUser, authDate };
+};
+
+const extractTelegramUserId = (user) => {
+  const normalized = normalizeTelegramUser(user);
+  if (!normalized || typeof normalized.id !== 'string') {
+    return '';
+  }
+  return normalized.id.trim();
 };
 
 app.use(express.json());
@@ -304,6 +331,16 @@ function getActiveSession(token) {
   return session;
 }
 
+function getAdminUserId(req) {
+  if (!req || typeof req !== 'object') {
+    return '';
+  }
+  if (typeof req.adminUserId === 'string' && req.adminUserId.trim()) {
+    return req.adminUserId.trim();
+  }
+  return extractTelegramUserId(req.adminUser);
+}
+
 function requireAdmin(req, res, next) {
   const token = getSessionTokenFromRequest(req);
   const session = getActiveSession(token);
@@ -314,9 +351,38 @@ function requireAdmin(req, res, next) {
 
   session.expiresAt = Date.now() + SESSION_TTL_MS;
   setSessionCookie(res, token, SESSION_TTL_MS);
+  const normalizedUser = normalizeTelegramUser(session.user);
+  if (!normalizedUser || !normalizedUser.id) {
+    activeSessions.delete(token);
+    clearSessionCookie(res);
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  session.user = normalizedUser;
   req.adminSessionToken = token;
-  req.adminUser = session.user;
+  req.adminUser = normalizedUser;
+  req.adminUserId = normalizedUser.id.trim();
   return next();
+}
+
+async function ensureGroupOwnedByUser(groupId, userId) {
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { id: true, ownerId: true },
+  });
+
+  if (!group) {
+    const error = new Error('Group not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (!userId || group.ownerId !== userId) {
+    const error = new Error(ADMIN_GROUP_OWNERSHIP_ERROR);
+    error.statusCode = 403;
+    throw error;
+  }
+
+  return group;
 }
 
 app.post('/auth/login', (req, res) => {
@@ -328,14 +394,15 @@ app.post('/auth/login', (req, res) => {
 
   try {
     const { user } = verifyTelegramLogin(initDataRaw);
+    const normalizedUser = normalizeTelegramUser(user);
 
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = Date.now() + SESSION_TTL_MS;
 
-    activeSessions.set(token, { expiresAt, user });
+    activeSessions.set(token, { expiresAt, user: normalizedUser });
     setSessionCookie(res, token, SESSION_TTL_MS);
 
-    return res.json({ status: 'ok', expiresAt, user });
+    return res.json({ status: 'ok', expiresAt, user: normalizedUser });
   } catch (error) {
     console.warn('Telegram admin login failed', error);
     const statusCode =
@@ -360,7 +427,11 @@ app.post('/auth/logout', (req, res) => {
 app.get('/auth/verify', requireAdmin, (req, res) => {
   const token = req.adminSessionToken;
   const session = getActiveSession(token);
-  res.json({ status: 'ok', expiresAt: session?.expiresAt, user: session?.user || null });
+  const user = normalizeTelegramUser(req.adminUser);
+  if (session && user) {
+    session.user = user;
+  }
+  res.json({ status: 'ok', expiresAt: session?.expiresAt, user: user || null });
 });
 
 function parsePagination(query) {
@@ -375,6 +446,7 @@ function serializeGroupSummary(group) {
     id: group.id,
     title: group.title,
     description: group.description,
+    ownerId: group.ownerId || null,
     createdAt: group.createdAt,
     updatedAt: group.updatedAt,
     cardsCount: group._count?.cards ?? group.cardsCount ?? 0,
@@ -557,9 +629,14 @@ app.post('/groups', requireAdmin, async (req, res) => {
   try {
     const title = String(req.body?.title ?? '').trim();
     const descriptionRaw = req.body?.description;
+    const ownerId = getAdminUserId(req);
 
     if (!title) {
       return res.status(400).json({ error: 'Group title is required' });
+    }
+
+    if (!ownerId) {
+      return res.status(403).json({ error: 'Не удалось определить владельца группы' });
     }
 
     const group = await prisma.group.create({
@@ -569,6 +646,7 @@ app.post('/groups', requireAdmin, async (req, res) => {
           descriptionRaw === null || descriptionRaw === undefined
             ? null
             : String(descriptionRaw).trim() || null,
+        ownerId,
       },
       include: {
         _count: { select: { cards: true } },
@@ -588,6 +666,9 @@ app.put('/groups/:id', requireAdmin, async (req, res) => {
     if (Number.isNaN(id)) {
       return res.status(400).json({ error: 'Invalid group id' });
     }
+
+    const ownerId = getAdminUserId(req);
+    await ensureGroupOwnedByUser(id, ownerId);
 
     const titleRaw = req.body?.title;
     const descriptionRaw = req.body?.description;
@@ -615,7 +696,10 @@ app.put('/groups/:id', requireAdmin, async (req, res) => {
 
     res.json(serializeGroupSummary(updated));
   } catch (error) {
-    if (error.code === 'P2025') {
+    if (error.statusCode === 403) {
+      return res.status(403).json({ error: error.message });
+    }
+    if (error.code === 'P2025' || error.statusCode === 404) {
       return res.status(404).json({ error: 'Group not found' });
     }
     console.error('Failed to update group', error);
@@ -635,10 +719,8 @@ app.put('/groups/:id/cards', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Cards payload must be an array' });
     }
 
-    const group = await prisma.group.findUnique({ where: { id } });
-    if (!group) {
-      return res.status(404).json({ error: 'Group not found' });
-    }
+    const ownerId = getAdminUserId(req);
+    await ensureGroupOwnedByUser(id, ownerId);
 
     const updatedGroup = await replaceGroupCards(id, cardsPayload);
 
@@ -659,11 +741,17 @@ app.delete('/groups/:id', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Invalid group id' });
     }
 
+    const ownerId = getAdminUserId(req);
+    await ensureGroupOwnedByUser(id, ownerId);
+
     await prisma.group.delete({ where: { id } });
 
     res.status(204).send();
   } catch (error) {
-    if (error.code === 'P2025') {
+    if (error.statusCode === 403) {
+      return res.status(403).json({ error: error.message });
+    }
+    if (error.code === 'P2025' || error.statusCode === 404) {
       return res.status(404).json({ error: 'Group not found' });
     }
     console.error('Failed to delete group', error);

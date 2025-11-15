@@ -60,10 +60,23 @@
                 <li
                   v-for="group in groups"
                   :key="group.id"
-                  :class="['group-list-item', { active: group.id === selectedGroupId }]"
+                  :class="[
+                    'group-list-item',
+                    {
+                      active: group.id === selectedGroupId,
+                      owned: isGroupOwnedByCurrentUser(group),
+                    },
+                  ]"
                 >
-                  <button type="button" @click="handleSelectGroup(group.id)">
-                    <span class="group-list-item__title">{{ group.title }}</span>
+                  <button
+                    type="button"
+                    @click="handleSelectGroup(group.id)"
+                    :class="{ owned: isGroupOwnedByCurrentUser(group) }"
+                  >
+                    <div class="group-list-item__header">
+                      <span class="group-list-item__title">{{ group.title }}</span>
+                      <span v-if="isGroupOwnedByCurrentUser(group)" class="group-list-item__badge">Моя</span>
+                    </div>
                     <span class="group-list-item__meta">
                       {{ group.cardsCount ?? 0 }} карточ{{ getCardWord(group.cardsCount ?? 0) }}
                     </span>
@@ -110,23 +123,34 @@
                 <h2>Настройки группы</h2>
               </div>
               <form class="panel-body form-vertical" @submit.prevent="saveGroupDetails">
+                <p v-if="activeGroupOwnershipText" class="muted ownership-note">
+                  {{ activeGroupOwnershipText }}
+                </p>
                 <label class="form-field">
                   <span>Название</span>
-                  <input v-model.trim="groupForm.title" type="text" required />
+                  <input v-model.trim="groupForm.title" type="text" required :disabled="!canEditActiveGroup" />
                 </label>
                 <label class="form-field">
                   <span>Описание</span>
-                  <textarea v-model.trim="groupForm.description" rows="4"></textarea>
+                  <textarea
+                    v-model.trim="groupForm.description"
+                    rows="4"
+                    :disabled="!canEditActiveGroup"
+                  ></textarea>
                 </label>
                 <div class="panel-footer">
-                  <button class="primary-button" type="submit" :disabled="groupSaving || groupDeleting">
+                  <button
+                    class="primary-button"
+                    type="submit"
+                    :disabled="groupSaving || groupDeleting || !canEditActiveGroup"
+                  >
                     {{ groupSaving ? 'Сохранение...' : 'Сохранить группу' }}
                   </button>
                   <button
                     class="danger-button"
                     type="button"
                     @click="deleteGroup"
-                    :disabled="groupDeleting || groupSaving"
+                    :disabled="groupDeleting || groupSaving || !canEditActiveGroup"
                   >
                     {{ groupDeleting ? 'Удаление...' : 'Удалить группу' }}
                   </button>
@@ -141,12 +165,25 @@
                 </p>
               </div>
               <div class="panel-body form-vertical">
+                <p v-if="!canEditActiveGroup" class="ownership-note ownership-note--warning">
+                  {{ OWNERSHIP_ERROR_MESSAGE }}
+                </p>
                 <label class="form-field">
                   <span>Содержимое</span>
-                  <textarea v-model="cardsText" rows="16" spellcheck="false"></textarea>
+                  <textarea
+                    v-model="cardsText"
+                    rows="16"
+                    spellcheck="false"
+                    :disabled="!canEditActiveGroup"
+                  ></textarea>
                 </label>
                 <div class="panel-footer">
-                  <button class="primary-button" type="button" @click="saveCards" :disabled="cardsSaving">
+                  <button
+                    class="primary-button"
+                    type="button"
+                    @click="saveCards"
+                    :disabled="cardsSaving || !canEditActiveGroup"
+                  >
                     {{ cardsSaving ? 'Сохранение...' : 'Сохранить карточки' }}
                   </button>
                 </div>
@@ -173,10 +210,54 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { apiBaseUrl } from './apiConfig.js';
 
+const OWNERSHIP_ERROR_MESSAGE = 'Вы можете изменять только созданные вами группы';
+
+const normalizeTelegramUserClient = (user) => {
+  if (!user || typeof user !== 'object') {
+    return null;
+  }
+  const normalized = { ...user };
+  const rawId =
+    user.id ??
+    (typeof user.user === 'object' && user.user !== null ? user.user.id : undefined);
+  if (rawId === undefined || rawId === null || rawId === '') {
+    normalized.id = '';
+  } else {
+    normalized.id = String(rawId);
+  }
+  return normalized;
+};
+
+const extractTelegramUserId = (user) => {
+  const normalized = normalizeTelegramUserClient(user);
+  if (!normalized) {
+    return '';
+  }
+  return typeof normalized.id === 'string' ? normalized.id.trim() : '';
+};
+
+const resolveTelegramUser = (...candidates) => {
+  for (const candidate of candidates) {
+    const normalized = normalizeTelegramUserClient(candidate);
+    if (normalized && normalized.id) {
+      return normalized;
+    }
+  }
+  for (const candidate of candidates) {
+    const normalized = normalizeTelegramUserClient(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return null;
+};
+
 const loginError = ref('');
 const loginPending = ref(false);
 const isAuthenticated = ref(false);
 const telegramUser = ref(null);
+
+const currentUserId = computed(() => extractTelegramUserId(telegramUser.value));
 
 const telegramBotUsername = (import.meta.env.VITE_ADMIN_TELEGRAM_BOT_USERNAME || '').trim();
 const telegramWebAppAvailable = ref(false);
@@ -203,6 +284,39 @@ const selectedGroupId = ref(null);
 const activeGroup = ref(null);
 const activeGroupLoading = ref(false);
 const activeGroupError = ref('');
+
+const isGroupOwnedByCurrentUser = (group) => {
+  if (!group || typeof group !== 'object') {
+    return false;
+  }
+  const ownerId =
+    group.ownerId ??
+    (typeof group.owner_id === 'string' || typeof group.owner_id === 'number'
+      ? group.owner_id
+      : null);
+  if (ownerId === undefined || ownerId === null || ownerId === '') {
+    return false;
+  }
+  return String(ownerId).trim() === currentUserId.value;
+};
+
+const canEditActiveGroup = computed(() => isGroupOwnedByCurrentUser(activeGroup.value));
+
+const activeGroupOwnershipText = computed(() => {
+  const group = activeGroup.value;
+  if (!group) {
+    return '';
+  }
+  const ownerIdRaw = group.ownerId ?? group.owner_id ?? '';
+  const ownerId = typeof ownerIdRaw === 'string' ? ownerIdRaw.trim() : String(ownerIdRaw ?? '').trim();
+  if (!ownerId) {
+    return 'Группа создана до появления авторов и доступна только для чтения.';
+  }
+  if (canEditActiveGroup.value) {
+    return 'Вы создали эту группу и можете её редактировать.';
+  }
+  return `Группа создана другим пользователем (Telegram ID ${ownerId}). Редактирование недоступно.`;
+});
 
 const groupForm = reactive({ title: '', description: '' });
 const groupSaving = ref(false);
@@ -346,6 +460,10 @@ const updateGroupInList = (updated) => {
   if (cardsCount !== undefined) {
     normalized.cardsCount = cardsCount;
   }
+  const ownerId = updated.ownerId ?? updated.owner_id;
+  if (ownerId !== undefined) {
+    normalized.ownerId = ownerId ?? null;
+  }
   if (index >= 0) {
     groups.value.splice(index, 1, normalized);
   } else {
@@ -374,7 +492,10 @@ const fetchGroups = async () => {
     if (!data || !Array.isArray(data.data)) {
       throw new Error('Некорректный ответ сервера при загрузке групп');
     }
-    groups.value = data.data;
+    groups.value = data.data.map((group) => ({
+      ...group,
+      ownerId: group.ownerId ?? group.owner_id ?? null,
+    }));
     if (selectedGroupId.value) {
       const stillExists = data.data.some((group) => group.id === selectedGroupId.value);
       if (!stillExists) {
@@ -400,17 +521,22 @@ const fetchGroupDetails = async (groupId) => {
       throw new Error(await parseErrorResponse(response));
     }
     const data = await response.json();
-    activeGroup.value = data;
-    groupForm.title = data.title || '';
-    groupForm.description = data.description || '';
-    cardsText.value = formatCardsText(data.cards || []);
+    const normalized = {
+      ...data,
+      ownerId: data.ownerId ?? data.owner_id ?? null,
+    };
+    activeGroup.value = normalized;
+    groupForm.title = normalized.title || '';
+    groupForm.description = normalized.description || '';
+    cardsText.value = formatCardsText(normalized.cards || []);
     updateGroupInList({
-      id: data.id,
-      title: data.title,
-      description: data.description,
-      cardsCount: Array.isArray(data.cards) ? data.cards.length : undefined,
-      createdAt: data.createdAt,
-      updatedAt: data.updatedAt,
+      id: normalized.id,
+      title: normalized.title,
+      description: normalized.description,
+      cardsCount: Array.isArray(normalized.cards) ? normalized.cards.length : undefined,
+      ownerId: normalized.ownerId,
+      createdAt: normalized.createdAt,
+      updatedAt: normalized.updatedAt,
     });
   } catch (error) {
     console.error('Failed to load group details', error);
@@ -622,8 +748,14 @@ const loginWithInitData = async (initData, fallbackUser = null) => {
     }
 
     const data = await response.json();
+    const resolvedUser = resolveTelegramUser(
+      data?.user,
+      fallbackUser,
+      decodeTelegramUser(normalized),
+      telegramUser.value,
+    );
     isAuthenticated.value = true;
-    telegramUser.value = data?.user || fallbackUser || decodeTelegramUser(normalized) || null;
+    telegramUser.value = resolvedUser;
     showFeedback('success', 'Вы успешно вошли в админку');
     await fetchGroups();
   } catch (error) {
@@ -818,6 +950,10 @@ const createGroup = async () => {
 
 const saveGroupDetails = async () => {
   if (!activeGroup.value) return;
+  if (!canEditActiveGroup.value) {
+    showFeedback('error', OWNERSHIP_ERROR_MESSAGE);
+    return;
+  }
   if (!groupForm.title.trim()) {
     showFeedback('error', 'Название группы не может быть пустым');
     return;
@@ -837,8 +973,13 @@ const saveGroupDetails = async () => {
       throw new Error(await parseErrorResponse(response));
     }
     const data = await response.json();
-    activeGroup.value = { ...activeGroup.value, ...data };
-    updateGroupInList(data);
+    const normalized = {
+      ...activeGroup.value,
+      ...data,
+      ownerId: data.ownerId ?? data.owner_id ?? activeGroup.value?.ownerId ?? null,
+    };
+    activeGroup.value = normalized;
+    updateGroupInList(normalized);
     showFeedback('success', 'Данные группы сохранены');
   } catch (error) {
     console.error('Failed to update group', error);
@@ -850,6 +991,10 @@ const saveGroupDetails = async () => {
 
 const deleteGroup = async () => {
   if (!activeGroup.value) return;
+  if (!canEditActiveGroup.value) {
+    showFeedback('error', OWNERSHIP_ERROR_MESSAGE);
+    return;
+  }
   const groupId = activeGroup.value.id;
   const confirmationMessage = `Удалить группу «${activeGroup.value.title || 'Без названия'}»?`;
   const confirmed =
@@ -882,6 +1027,10 @@ const deleteGroup = async () => {
 
 const saveCards = async () => {
   if (!activeGroup.value) return;
+  if (!canEditActiveGroup.value) {
+    showFeedback('error', OWNERSHIP_ERROR_MESSAGE);
+    return;
+  }
   cardsSaving.value = true;
   try {
     const parsedCards = parseCardsText(cardsText.value);
@@ -902,15 +1051,20 @@ const saveCards = async () => {
       throw new Error(await parseErrorResponse(response));
     }
     const data = await response.json();
-    activeGroup.value = data;
-    cardsText.value = formatCardsText(data.cards || []);
+    const normalized = {
+      ...data,
+      ownerId: data.ownerId ?? data.owner_id ?? activeGroup.value?.ownerId ?? null,
+    };
+    activeGroup.value = normalized;
+    cardsText.value = formatCardsText(normalized.cards || []);
     updateGroupInList({
-      id: data.id,
-      title: data.title,
-      description: data.description,
-      cardsCount: Array.isArray(data.cards) ? data.cards.length : undefined,
-      createdAt: data.createdAt,
-      updatedAt: data.updatedAt,
+      id: normalized.id,
+      title: normalized.title,
+      description: normalized.description,
+      cardsCount: Array.isArray(normalized.cards) ? normalized.cards.length : undefined,
+      ownerId: normalized.ownerId,
+      createdAt: normalized.createdAt,
+      updatedAt: normalized.updatedAt,
     });
     showFeedback('success', 'Карточки сохранены');
   } catch (error) {
@@ -947,7 +1101,7 @@ const restoreSession = async () => {
 
     isAuthenticated.value = true;
     if (data && typeof data === 'object') {
-      telegramUser.value = data.user || telegramUser.value;
+      telegramUser.value = resolveTelegramUser(data.user, telegramUser.value);
     }
     await fetchGroups();
   } catch (error) {
@@ -1304,8 +1458,34 @@ onBeforeUnmount(() => {
   box-shadow: 0 8px 20px rgba(37, 99, 235, 0.4);
 }
 
+.group-list-item.owned button {
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.25);
+}
+
+.group-list-item:not(.active) button.owned:hover {
+  background: #e0ecff;
+}
+
+.group-list-item__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .group-list-item__title {
   font-weight: 600;
+}
+
+.group-list-item__badge {
+  background: #2563eb;
+  color: #ffffff;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .group-list-item__meta {
@@ -1348,6 +1528,18 @@ textarea {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+.ownership-note {
+  margin: 0;
+  font-size: 14px;
+}
+
+.ownership-note--warning {
+  color: #b45309;
+  background: #fef3c7;
+  padding: 10px 12px;
+  border-radius: 10px;
 }
 
 @media (max-width: 1280px) {
