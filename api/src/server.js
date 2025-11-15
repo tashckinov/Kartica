@@ -796,15 +796,6 @@ app.get('/groups', async (req, res) => {
       filters.push({ ownerId: adminUserId });
     }
 
-    if (searchQuery) {
-      filters.push({
-        OR: [
-          { title: { contains: searchQuery, mode: 'insensitive' } },
-          { description: { contains: searchQuery, mode: 'insensitive' } },
-        ],
-      });
-    }
-
     let whereClause = {};
     if (filters.length === 1) {
       whereClause = filters[0];
@@ -812,16 +803,41 @@ app.get('/groups', async (req, res) => {
       whereClause = { AND: filters };
     }
 
-    const [total, groups] = await Promise.all([
-      prisma.group.count({ where: whereClause }),
-      prisma.group.findMany({
-        where: whereClause,
-        skip,
-        take: pageSize,
+    let groups = [];
+    let total = 0;
+
+    if (searchQuery) {
+      const normalizedSearch = searchQuery.toLocaleLowerCase();
+      const baseGroups = await prisma.group.findMany({
+        where: filters.length ? whereClause : undefined,
         orderBy: { id: 'asc' },
         include: { _count: { select: { cards: true } } },
-      }),
-    ]);
+      });
+
+      const filteredGroups = baseGroups.filter((group) => {
+        const title = group.title?.toLocaleLowerCase?.() || '';
+        const description = group.description?.toLocaleLowerCase?.() || '';
+        return (
+          title.includes(normalizedSearch) || description.includes(normalizedSearch)
+        );
+      });
+
+      total = filteredGroups.length;
+      groups = filteredGroups.slice(skip, skip + pageSize);
+    } else {
+      const [count, paginatedGroups] = await Promise.all([
+        prisma.group.count({ where: filters.length ? whereClause : undefined }),
+        prisma.group.findMany({
+          where: filters.length ? whereClause : undefined,
+          skip,
+          take: pageSize,
+          orderBy: { id: 'asc' },
+          include: { _count: { select: { cards: true } } },
+        }),
+      ]);
+      total = count;
+      groups = paginatedGroups;
+    }
 
     res.json({
       data: groups.map((group) => serializeGroupSummary(group)),
