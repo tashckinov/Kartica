@@ -73,72 +73,10 @@ const resolveFirstTruthyEnv = (keys) => {
   return '';
 };
 
-const normalizeMiniAppUrl = ({ rawUrl, useTestEnvironment }) => {
-  const trimmedUrl = trimValue(rawUrl);
-
-  if (!trimmedUrl) {
-    return '';
-  }
-
-  try {
-    const parsedUrl = new URL(trimmedUrl);
-    const host = parsedUrl.hostname.toLowerCase();
-
-    const pathSegments = parsedUrl.pathname.split('/');
-    let hasUpdatedSegment = false;
-
-    const normalizedSegments = pathSegments.map((segment) => {
-      if (segment.startsWith('@')) {
-        hasUpdatedSegment = true;
-        return segment.slice(1);
-      }
-
-      return segment;
-    });
-
-    if (hasUpdatedSegment) {
-      parsedUrl.pathname = normalizedSegments.join('/');
-    }
-
-    if (useTestEnvironment && (host === 't.me' || host === 'telegram.me')) {
-      const modeValues = parsedUrl.searchParams.getAll('mode');
-      const hasTestMode = modeValues.some((value) => value && value.toLowerCase() === 'test');
-
-      if (!hasTestMode) {
-        parsedUrl.searchParams.append('mode', 'test');
-      }
-    }
-
-    return parsedUrl.toString();
-  } catch (error) {
-    console.warn('Не удалось обработать URL мини-приложения.', {
-      rawUrl: trimmedUrl,
-      error,
-    });
-
-    return trimmedUrl;
-  }
-};
-
-const getMiniAppUrl = ({ useTestEnvironment }) =>
-  normalizeMiniAppUrl({
-    rawUrl: resolveFirstTruthyEnv(
-      useTestEnvironment
-        ? [
-            'ADMIN_TELEGRAM_TEST_MINIAPP_URL',
-            'TELEGRAM_TEST_MINIAPP_URL',
-            'ADMIN_TELEGRAM_MINIAPP_URL',
-            'TELEGRAM_MINIAPP_URL',
-          ]
-        : [
-            'ADMIN_TELEGRAM_MINIAPP_URL',
-            'TELEGRAM_MINIAPP_URL',
-            'ADMIN_TELEGRAM_TEST_MINIAPP_URL',
-            'TELEGRAM_TEST_MINIAPP_URL',
-          ],
-    ),
-    useTestEnvironment,
-  });
+const getMiniAppUrl = () =>
+  trimValue(
+    process.env.ADMIN_TELEGRAM_MINIAPP_URL || process.env.TELEGRAM_MINIAPP_URL || '',
+  );
 
 const getBotApiBaseUrl = () =>
   resolveFirstTruthyEnv([
@@ -192,7 +130,7 @@ const startTelegramBot = () => {
   }
 
   const useTestEnv = shouldUseTestEnvironment();
-  const miniAppUrl = getMiniAppUrl({ useTestEnvironment: useTestEnv });
+  const miniAppUrl = getMiniAppUrl();
 
   const botOptions = { polling: true };
 
@@ -239,7 +177,7 @@ const startTelegramBot = () => {
     } catch (error) {
       if (replyMarkup && isButtonUrlInvalidError(error)) {
         console.error(
-          'Telegram отклонил ссылку мини-приложения. Проверьте URL и при необходимости задайте отдельный адрес для тестового сервера через ADMIN_TELEGRAM_TEST_MINIAPP_URL.',
+          'Telegram отклонил ссылку мини-приложения. Проверьте значение ADMIN_TELEGRAM_MINIAPP_URL.',
           { miniAppUrl },
           error,
         );
