@@ -760,12 +760,31 @@ app.post('/auth/claim-token', requireAdmin, async (req, res) => {
 });
 
 app.get('/groups', async (req, res) => {
+  let adminUserId = '';
+
+  const candidateToken = getAdminTokenFromRequest(req);
+  if (candidateToken) {
+    try {
+      const payload = verifyAdminToken(candidateToken);
+      const normalizedUser = normalizeAdminUser(payload.user);
+      adminUserId =
+        normalizedUser?.id || sanitizeString(payload.sub, ADMIN_ID_MAX_LENGTH) || '';
+      if (!adminUserId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+    } catch (error) {
+      return res.status(401).json({ error: error?.message || 'Unauthorized' });
+    }
+  }
+
   try {
     const { page, pageSize, skip } = parsePagination(req.query);
+    const whereClause = adminUserId ? { ownerId: adminUserId } : {};
 
     const [total, groups] = await Promise.all([
-      prisma.group.count(),
+      prisma.group.count({ where: whereClause }),
       prisma.group.findMany({
+        where: whereClause,
         skip,
         take: pageSize,
         orderBy: { id: 'asc' },
@@ -789,6 +808,22 @@ app.get('/groups', async (req, res) => {
 });
 
 app.get('/groups/:id', async (req, res) => {
+  let adminUserId = '';
+  const candidateToken = getAdminTokenFromRequest(req);
+  if (candidateToken) {
+    try {
+      const payload = verifyAdminToken(candidateToken);
+      const normalizedUser = normalizeAdminUser(payload.user);
+      adminUserId =
+        normalizedUser?.id || sanitizeString(payload.sub, ADMIN_ID_MAX_LENGTH) || '';
+      if (!adminUserId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+    } catch (error) {
+      return res.status(401).json({ error: error?.message || 'Unauthorized' });
+    }
+  }
+
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
@@ -806,6 +841,13 @@ app.get('/groups/:id', async (req, res) => {
 
     if (!group) {
       return res.status(404).json({ error: 'Group not found' });
+    }
+
+    if (adminUserId) {
+      const ownerId = group.ownerId ? String(group.ownerId).trim() : '';
+      if (!ownerId || ownerId !== adminUserId) {
+        return res.status(403).json({ error: 'Недостаточно прав для просмотра группы' });
+      }
     }
 
     res.json(group);

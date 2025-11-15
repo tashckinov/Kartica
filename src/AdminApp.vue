@@ -759,6 +759,12 @@ const updateGroupInList = (updated) => {
   if (ownerId !== undefined) {
     normalized.ownerId = ownerId ?? null;
   }
+  if (!isGroupOwnedByCurrentUser(normalized)) {
+    if (index >= 0) {
+      groups.value.splice(index, 1);
+    }
+    return;
+  }
   if (index >= 0) {
     groups.value.splice(index, 1, normalized);
   } else {
@@ -812,12 +818,14 @@ const fetchGroups = async () => {
     if (!data || !Array.isArray(data.data)) {
       throw new Error('Некорректный ответ сервера при загрузке групп');
     }
-    groups.value = data.data.map((group) => ({
+    const normalizedGroups = data.data.map((group) => ({
       ...group,
       ownerId: group.ownerId ?? group.owner_id ?? null,
     }));
+    const ownedGroups = normalizedGroups.filter((group) => isGroupOwnedByCurrentUser(group));
+    groups.value = ownedGroups;
     if (selectedGroupId.value) {
-      const stillExists = data.data.some((group) => group.id === selectedGroupId.value);
+      const stillExists = ownedGroups.some((group) => group.id === selectedGroupId.value);
       if (!stillExists) {
         resetActiveGroup();
       }
