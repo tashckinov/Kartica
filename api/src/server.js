@@ -52,7 +52,7 @@ ensurePrismaClientIsGenerated();
 
 const { PrismaClient } = require('@prisma/client');
 
-require('../bot');
+const { startTelegramBot } = require('../bot');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -1125,6 +1125,7 @@ app.use((req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`API server listening on http://localhost:${PORT}`);
+  startTelegramBot();
 });
 
 async function shutdown() {
