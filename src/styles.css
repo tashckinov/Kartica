@@ -849,6 +849,144 @@ body.admin-route #app {
   box-shadow: 0 18px 34px -28px var(--shadow-color);
 }
 
+.search-screen {
+  display: grid;
+  gap: clamp(18px, 5vw, 28px);
+}
+
+.search-header {
+  display: grid;
+  gap: 8px;
+}
+
+.search-header h2 {
+  margin: 0;
+  font-size: clamp(22px, 6vw, 28px);
+  color: var(--text-color);
+}
+
+.search-header p {
+  margin: 0;
+  color: var(--muted-text-color);
+  font-size: clamp(13px, 3.8vw, 15px);
+  line-height: 1.5;
+}
+
+.search-form {
+  display: grid;
+  gap: 12px;
+}
+
+@media (min-width: 520px) {
+  .search-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+}
+
+.search-field {
+  display: block;
+}
+
+.search-field input {
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-color) 95%, transparent);
+  color: var(--text-color);
+  font-size: clamp(14px, 4vw, 16px);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.search-field input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent-color) 55%, var(--border-color));
+  box-shadow: 0 18px 34px -28px var(--shadow-color);
+}
+
+.search-submit {
+  justify-self: stretch;
+  padding: 12px 20px;
+  border-radius: 14px;
+  border: none;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.9), rgba(59, 130, 246, 0.75));
+  color: #0b1020;
+  font-weight: 600;
+  font-size: 14px;
+  text-align: center;
+  cursor: pointer;
+  box-shadow: 0 18px 36px -26px rgba(56, 189, 248, 0.6);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
+.search-submit:hover,
+.search-submit:focus {
+  outline: none;
+  transform: translateY(-1px);
+  box-shadow: 0 22px 40px -30px rgba(56, 189, 248, 0.6);
+}
+
+.search-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.search-state {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  color: var(--muted-text-color);
+  font-size: clamp(13px, 3.8vw, 15px);
+}
+
+.search-error {
+  color: #fca5a5;
+}
+
+.search-retry {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 26%, var(--border-color));
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.16), rgba(56, 189, 248, 0)),
+    color-mix(in srgb, var(--surface-color) 96%, transparent);
+  color: var(--text-color);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
+.search-retry:hover,
+.search-retry:focus {
+  outline: none;
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent-color) 60%, var(--border-color));
+  box-shadow: 0 18px 32px -28px var(--shadow-color);
+}
+
+.search-retry:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.search-results {
+  gap: clamp(12px, 4vw, 18px);
+}
+
+.search-empty,
+.search-hint {
+  margin: 0;
+  color: var(--muted-text-color);
+  font-size: clamp(13px, 3.8vw, 15px);
+  line-height: 1.5;
+}
+
 .bottom-nav {
   position: fixed;
   bottom: 0;
@@ -865,7 +1003,7 @@ body.admin-route #app {
 
 .nav-items {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .nav-button {

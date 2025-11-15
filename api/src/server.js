@@ -88,6 +88,7 @@ const STATIC_ALLOWED_ORIGINS = (configuredAllowedOriginsRaw
 const hasExplicitAllowedOrigins = Boolean(configuredAllowedOriginsRaw);
 
 const ADMIN_GROUP_OWNERSHIP_ERROR = 'Можно изменять только созданные вами группы';
+const GROUP_SEARCH_QUERY_MAX_LENGTH = 120;
 
 app.use(express.json());
 
@@ -779,7 +780,37 @@ app.get('/groups', async (req, res) => {
 
   try {
     const { page, pageSize, skip } = parsePagination(req.query);
-    const whereClause = adminUserId ? { ownerId: adminUserId } : {};
+    const rawSearchQuery =
+      typeof req.query.search === 'string'
+        ? req.query.search
+        : typeof req.query.query === 'string'
+        ? req.query.query
+        : typeof req.query.q === 'string'
+        ? req.query.q
+        : '';
+    const searchQuery = sanitizeString(rawSearchQuery, GROUP_SEARCH_QUERY_MAX_LENGTH);
+
+    const filters = [];
+
+    if (adminUserId) {
+      filters.push({ ownerId: adminUserId });
+    }
+
+    if (searchQuery) {
+      filters.push({
+        OR: [
+          { title: { contains: searchQuery, mode: 'insensitive' } },
+          { description: { contains: searchQuery, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    let whereClause = {};
+    if (filters.length === 1) {
+      whereClause = filters[0];
+    } else if (filters.length > 1) {
+      whereClause = { AND: filters };
+    }
 
     const [total, groups] = await Promise.all([
       prisma.group.count({ where: whereClause }),
