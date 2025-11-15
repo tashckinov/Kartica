@@ -174,7 +174,6 @@
             <div v-else-if="activeTopic.cards && activeTopic.cards.length" class="card-list">
               <article v-for="card in activeTopic.cards" :key="card.id" class="flashcard" :data-card="card.id">
                 <img v-if="card.image" :src="card.image" :alt="card.translation" loading="lazy" />
-                <div v-else class="flashcard-image-placeholder">Нет изображения</div>
                 <div class="flashcard-content">
                   <span class="flashcard-translation">{{ card.translation }}</span>
                   <span v-if="card.original" class="flashcard-original">{{ card.original }}</span>
@@ -470,8 +469,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import BottomNav from './components/BottomNav.vue';
 import { navItems } from './data/navigation.js';
-
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000').replace(/\/$/, '');
+import { apiBaseUrl } from './apiConfig.js';
 
 const topics = ref([]);
 const currentPageTopicIds = ref([]);
@@ -815,7 +813,7 @@ const ensureFavoriteTopicsLoaded = async () => {
           id: card.id,
           translation: card.definition,
           original: card.term,
-          image: null,
+          image: card.image || null,
           example: card.example || ''
         }));
         upsertTopic({
@@ -1408,7 +1406,7 @@ const ensureTopicDetails = async (topicId) => {
       id: card.id,
       translation: card.definition,
       original: card.term,
-      image: null,
+      image: card.image || null,
       example: card.example || ''
     }));
     const updatedTopic = upsertTopic({

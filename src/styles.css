@@ -34,6 +34,14 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+body.admin-route {
+  background: #f3f4f6;
+  background-color: #f3f4f6;
+  color: #111827;
+  justify-content: flex-start;
+  align-items: stretch;
+}
+
 body.study-open {
   overflow: hidden;
 }
@@ -64,6 +72,17 @@ body.memorize-open {
   box-shadow: 0 32px 68px -36px var(--shadow-color);
   border: 1px solid rgba(56, 189, 248, 0.08);
   backdrop-filter: blur(10px);
+}
+
+body.admin-route #app {
+  width: 100%;
+  min-height: 100dvh;
+  height: auto;
+  max-width: none;
+  background: transparent;
+  box-shadow: none;
+  border: none;
+  backdrop-filter: none;
 }
 
 .app-shell {
@@ -574,24 +593,12 @@ body.memorize-open {
   min-width: 0;
 }
 
-.flashcard img,
-.flashcard-image-placeholder {
+.flashcard img {
   width: 100%;
   height: clamp(150px, 60vw, 180px);
-  object-fit: cover;
-}
-
-.flashcard-image-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background:
-    linear-gradient(135deg, rgba(56, 189, 248, 0.22), rgba(2, 132, 199, 0.08)),
-    linear-gradient(135deg, rgba(15, 23, 42, 0.6), rgba(15, 23, 42, 0.9));
-  color: var(--accent-color);
-  font-size: 13px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  object-fit: contain;
+  object-position: center;
+  background: color-mix(in srgb, var(--surface-color) 92%, transparent);
 }
 
 .flashcard-content {
@@ -927,7 +934,9 @@ body.memorize-open {
   display: block;
   width: 100%;
   height: clamp(160px, 32vw, 220px);
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
+  background: color-mix(in srgb, var(--surface-color) 92%, transparent);
 }
 
 .memorize-card-body {
@@ -1292,7 +1301,9 @@ body.memorize-open {
   display: block;
   width: 100%;
   height: auto;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
+  background: color-mix(in srgb, var(--surface-color) 92%, transparent);
 }
 
 .study-card-placeholder {
