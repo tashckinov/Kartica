@@ -164,11 +164,6 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { apiBaseUrl } from './apiConfig.js';
 
-const ADMIN_AUTH_SCHEME = 'SSHKey';
-const STORAGE_KEY = 'kartica-admin-auth-token';
-const LEGACY_STORAGE_KEY = 'kartica-admin-authenticated';
-
-const adminAuthToken = ref('');
 const privateKeyContent = ref('');
 const keyFileName = ref('');
 const keyReadError = ref('');
@@ -185,30 +180,9 @@ const normalizePrivateKey = (value) => {
   return value.replace(/\r\n?/g, '\n');
 };
 
-const encodePrivateKey = (value) => {
-  if (typeof globalThis !== 'undefined' && typeof globalThis.btoa === 'function') {
-    return globalThis.btoa(value);
-  }
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(value, 'utf8').toString('base64');
-  }
-  throw new Error('Base64 encoding is not supported in this environment');
-};
-
 const canSubmitKey = computed(
   () => Boolean(privateKeyContent.value.trim()) && !loginPending.value && !isReadingKey.value,
 );
-
-const applyAuthHeaders = (headers = {}) => {
-  const base = headers || {};
-  if (!adminAuthToken.value) {
-    return { ...base };
-  }
-  return {
-    ...base,
-    Authorization: `${ADMIN_AUTH_SCHEME} ${adminAuthToken.value}`,
-  };
-};
 
 const buildApiUrl = (path, params = {}) => {
   const url = new URL(path, `${apiBaseUrl}/`);
@@ -219,8 +193,6 @@ const buildApiUrl = (path, params = {}) => {
   });
   return url.toString();
 };
-
-const storage = typeof window !== 'undefined' ? window.localStorage : null;
 
 const groups = ref([]);
 const groupsLoading = ref(false);
@@ -281,9 +253,6 @@ const resetActiveGroup = () => {
 
 const clearAuthState = () => {
   isAuthenticated.value = false;
-  adminAuthToken.value = '';
-  storage?.removeItem(STORAGE_KEY);
-  storage?.removeItem(LEGACY_STORAGE_KEY);
   resetActiveGroup();
   loginPending.value = false;
   isReadingKey.value = false;
@@ -334,36 +303,6 @@ const handleKeyFileChange = async (event) => {
   } finally {
     isReadingKey.value = false;
   }
-};
-
-const verifyAdminKey = async (token) => {
-  const response = await fetch(buildApiUrl('/auth/verify'), {
-    headers: {
-      Authorization: `${ADMIN_AUTH_SCHEME} ${token}`,
-    },
-  });
-
-  if (response.ok) {
-    return;
-  }
-
-  if (response.status === 401) {
-    throw new Error('Предоставленный ключ не подходит для входа');
-  }
-
-  try {
-    const data = await response.json();
-    if (data && typeof data === 'object' && data.error) {
-      throw new Error(data.error);
-    }
-  } catch (error) {
-    if (error instanceof Error && error.message && error.message !== 'Unexpected end of JSON input') {
-      throw error;
-    }
-    // ignore empty or malformed JSON bodies
-  }
-
-  throw new Error(`Не удалось подтвердить ключ администратора (код ${response.status})`);
 };
 
 const parseErrorResponse = async (response) => {
@@ -462,7 +401,9 @@ const fetchGroups = async () => {
   groupsLoading.value = true;
   groupsError.value = '';
   try {
-    const response = await fetch(buildApiUrl('/groups', { page: 1, pageSize: 200 }));
+    const response = await fetch(buildApiUrl('/groups', { page: 1, pageSize: 200 }), {
+      credentials: 'include',
+    });
     if (!response.ok) {
       throw new Error(await parseErrorResponse(response));
     }
@@ -489,7 +430,9 @@ const fetchGroupDetails = async (groupId) => {
   activeGroupLoading.value = true;
   activeGroupError.value = '';
   try {
-    const response = await fetch(buildApiUrl(`/groups/${groupId}`));
+    const response = await fetch(buildApiUrl(`/groups/${groupId}`), {
+      credentials: 'include',
+    });
     if (!response.ok) {
       throw new Error(await parseErrorResponse(response));
     }
@@ -534,30 +477,61 @@ const handleLogin = async () => {
     return;
   }
 
-  const normalizedKey = privateKeyContent.value;
   loginPending.value = true;
 
   try {
-    const token = encodePrivateKey(normalizedKey);
-    await verifyAdminKey(token);
-    adminAuthToken.value = token;
+    const response = await fetch(buildApiUrl('/auth/login'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ key: privateKeyContent.value }),
+    });
+
+    if (!response.ok) {
+      let errorMessage = '';
+      try {
+        const data = await response.json();
+        if (data && typeof data === 'object' && data.error) {
+          errorMessage = data.error;
+        }
+      } catch (error) {
+        // ignore malformed JSON
+      }
+      throw new Error(errorMessage || `Не удалось подтвердить ключ администратора (код ${response.status})`);
+    }
+
     isAuthenticated.value = true;
-    storage?.setItem(STORAGE_KEY, token);
     showFeedback('success', 'Вы успешно вошли в админку');
+    privateKeyContent.value = '';
+    keyFileName.value = '';
+    if (keyFileInput.value) {
+      keyFileInput.value.value = '';
+    }
     await fetchGroups();
   } catch (error) {
     console.error('Failed to verify admin key', error);
-    adminAuthToken.value = '';
-    isAuthenticated.value = false;
-    loginError.value = error instanceof Error && error.message ? error.message : 'Не удалось подтвердить ключ администратора';
+    clearAuthState();
+    loginError.value =
+      error instanceof Error && error.message
+        ? error.message
+        : 'Не удалось подтвердить ключ администратора';
   } finally {
     loginPending.value = false;
   }
 };
 
-const logout = () => {
-  clearAuthState();
-  showFeedback('success', 'Вы вышли из админки');
+const logout = async () => {
+  try {
+    await fetch(buildApiUrl('/auth/logout'), {
+      method: 'POST',
+      credentials: 'include',
+    });
+  } catch (error) {
+    console.warn('Не удалось корректно завершить сессию администратора', error);
+  } finally {
+    clearAuthState();
+    showFeedback('success', 'Вы вышли из админки');
+  }
 };
 
 const createGroup = async () => {
@@ -569,7 +543,8 @@ const createGroup = async () => {
   try {
     const response = await fetch(buildApiUrl('/groups'), {
       method: 'POST',
-      headers: applyAuthHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
         title: newGroupForm.title.trim(),
         description: newGroupForm.description.trim(),
@@ -602,7 +577,8 @@ const saveGroupDetails = async () => {
   try {
     const response = await fetch(buildApiUrl(`/groups/${activeGroup.value.id}`), {
       method: 'PUT',
-      headers: applyAuthHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
         title: groupForm.title.trim(),
         description: groupForm.description.trim(),
@@ -637,7 +613,7 @@ const deleteGroup = async () => {
   try {
     const response = await fetch(buildApiUrl(`/groups/${groupId}`), {
       method: 'DELETE',
-      headers: applyAuthHeaders(),
+      credentials: 'include',
     });
     if (!response.ok) {
       throw new Error(await parseErrorResponse(response));
@@ -662,7 +638,8 @@ const saveCards = async () => {
     const parsedCards = parseCardsText(cardsText.value);
     const response = await fetch(buildApiUrl(`/groups/${activeGroup.value.id}/cards`), {
       method: 'PUT',
-      headers: applyAuthHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
         cards: parsedCards.map((card) => ({
           term: card.term,
@@ -703,17 +680,17 @@ const retryActiveGroup = () => {
 
 const restoreSession = async () => {
   try {
-    const legacyFlag = storage?.getItem(LEGACY_STORAGE_KEY);
-    if (legacyFlag) {
-      storage?.removeItem(LEGACY_STORAGE_KEY);
+    const response = await fetch(buildApiUrl('/auth/verify'), {
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      clearAuthState();
+      return;
     }
 
-    const storedToken = storage?.getItem(STORAGE_KEY);
-    if (storedToken) {
-      adminAuthToken.value = storedToken;
-      isAuthenticated.value = true;
-      await fetchGroups();
-    }
+    isAuthenticated.value = true;
+    await fetchGroups();
   } catch (error) {
     console.warn('Не удалось восстановить сессию администратора', error);
     clearAuthState();
