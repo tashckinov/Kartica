@@ -174,7 +174,6 @@
             <div v-else-if="activeTopic.cards && activeTopic.cards.length" class="card-list">
               <article v-for="card in activeTopic.cards" :key="card.id" class="flashcard" :data-card="card.id">
                 <img v-if="card.image" :src="card.image" :alt="card.translation" loading="lazy" />
-                <div v-else class="flashcard-image-placeholder">Нет изображения</div>
                 <div class="flashcard-content">
                   <span class="flashcard-translation">{{ card.translation }}</span>
                   <span v-if="card.original" class="flashcard-original">{{ card.original }}</span>

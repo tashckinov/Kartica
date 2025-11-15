@@ -593,30 +593,12 @@ body.admin-route #app {
   min-width: 0;
 }
 
-.flashcard img,
-.flashcard-image-placeholder {
+.flashcard img {
   width: 100%;
   height: clamp(150px, 60vw, 180px);
-  object-fit: cover;
-}
-
-.flashcard img {
   object-fit: contain;
   object-position: center;
   background: color-mix(in srgb, var(--surface-color) 92%, transparent);
-}
-
-.flashcard-image-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background:
-    linear-gradient(135deg, rgba(56, 189, 248, 0.22), rgba(2, 132, 199, 0.08)),
-    linear-gradient(135deg, rgba(15, 23, 42, 0.6), rgba(15, 23, 42, 0.9));
-  color: var(--accent-color);
-  font-size: 13px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
 }
 
 .flashcard-content {
