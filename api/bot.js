@@ -3,6 +3,8 @@ const TelegramBot = require('node-telegram-bot-api');
 let bot = null;
 let isStopping = false;
 
+const trimValue = (value) => (typeof value === 'string' ? value.trim() : '');
+
 const isUnauthorizedError = (error) => {
   if (!error) {
     return false;
@@ -17,6 +19,19 @@ const isUnauthorizedError = (error) => {
     if (message.includes('401') && message.toLowerCase().includes('unauthorized')) {
       return true;
     }
+  }
+
+  return false;
+};
+
+const isButtonUrlInvalidError = (error) => {
+  if (!error) {
+    return false;
+  }
+
+  if (error.code === 'ETELEGRAM') {
+    const description = trimValue(error.response?.body?.description || error.message);
+    return description.includes('BUTTON_URL_INVALID');
   }
 
   return false;
@@ -45,21 +60,41 @@ const stopPollingSafely = async (currentBot) => {
   }
 };
 
-const getTelegramToken = () => (process.env.ADMIN_TELEGRAM_BOT_TOKEN || '').trim();
+const getTelegramToken = () => trimValue(process.env.ADMIN_TELEGRAM_BOT_TOKEN);
 
-const getMiniAppUrl = () =>
-  (
-    process.env.ADMIN_TELEGRAM_MINIAPP_URL ||
-    process.env.TELEGRAM_MINIAPP_URL ||
-    ''
-  ).trim();
+const resolveFirstTruthyEnv = (keys) => {
+  for (const key of keys) {
+    const value = trimValue(process.env[key]);
+    if (value) {
+      return value;
+    }
+  }
+
+  return '';
+};
+
+const getMiniAppUrl = ({ useTestEnvironment }) =>
+  resolveFirstTruthyEnv(
+    useTestEnvironment
+      ? [
+          'ADMIN_TELEGRAM_TEST_MINIAPP_URL',
+          'TELEGRAM_TEST_MINIAPP_URL',
+          'ADMIN_TELEGRAM_MINIAPP_URL',
+          'TELEGRAM_MINIAPP_URL',
+        ]
+      : [
+          'ADMIN_TELEGRAM_MINIAPP_URL',
+          'TELEGRAM_MINIAPP_URL',
+          'ADMIN_TELEGRAM_TEST_MINIAPP_URL',
+          'TELEGRAM_TEST_MINIAPP_URL',
+        ],
+  );
 
 const getBotApiBaseUrl = () =>
-  (
-    process.env.ADMIN_TELEGRAM_BOT_API_BASE_URL ||
-    process.env.TELEGRAM_BOT_API_BASE_URL ||
-    ''
-  ).trim();
+  resolveFirstTruthyEnv([
+    'ADMIN_TELEGRAM_BOT_API_BASE_URL',
+    'TELEGRAM_BOT_API_BASE_URL',
+  ]);
 
 const parseBoolean = (value) => {
   if (typeof value !== 'string') {
@@ -106,7 +141,8 @@ const startTelegramBot = () => {
     return null;
   }
 
-  const miniAppUrl = getMiniAppUrl();
+  const useTestEnv = shouldUseTestEnvironment();
+  const miniAppUrl = getMiniAppUrl({ useTestEnvironment: useTestEnv });
 
   const botOptions = { polling: true };
 
@@ -115,7 +151,7 @@ const startTelegramBot = () => {
     botOptions.baseApiUrl = baseApiUrl;
   }
 
-  if (shouldUseTestEnvironment()) {
+  if (useTestEnv) {
     botOptions.testEnvironment = true;
     console.info('Telegram bot test environment enabled.');
   }
@@ -131,6 +167,7 @@ const startTelegramBot = () => {
   bot.onText(/^\/start(?:@\w+)?$/i, async (message) => {
     const chatId = message.chat.id;
     const greeting = buildGreetingMessage(message, miniAppUrl);
+    const fallbackGreeting = buildGreetingMessage(message, '');
 
     const replyMarkup = miniAppUrl
       ? {
@@ -145,9 +182,29 @@ const startTelegramBot = () => {
         }
       : undefined;
 
+    const options = replyMarkup ? { reply_markup: replyMarkup } : undefined;
+
     try {
-      await bot.sendMessage(chatId, greeting, replyMarkup ? { reply_markup: replyMarkup } : undefined);
+      await bot.sendMessage(chatId, greeting, options);
     } catch (error) {
+      if (replyMarkup && isButtonUrlInvalidError(error)) {
+        console.error(
+          'Telegram отклонил ссылку мини-приложения. Проверьте URL и при необходимости задайте отдельный адрес для тестового сервера через ADMIN_TELEGRAM_TEST_MINIAPP_URL.',
+          { miniAppUrl },
+          error,
+        );
+
+        if (fallbackGreeting !== greeting) {
+          try {
+            await bot.sendMessage(chatId, fallbackGreeting);
+          } catch (fallbackError) {
+            console.error('Не удалось отправить сообщение без кнопки мини-приложения.', fallbackError);
+          }
+        }
+
+        return;
+      }
+
       console.error('Не удалось отправить приветственное сообщение в Telegram:', error);
     }
   });
