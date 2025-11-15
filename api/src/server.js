@@ -3,9 +3,40 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 const express = require('express');
 const crypto = require('crypto');
+const dotenv = require('dotenv');
 
 const apiRoot = path.join(__dirname, '..');
 const databasePath = path.join(apiRoot, 'prisma', 'dev.db');
+
+const protectedEnvKeys = new Set(Object.keys(process.env));
+
+const loadEnvFile = (filePath) => {
+  if (!filePath) {
+    return;
+  }
+
+  try {
+    if (!fs.existsSync(filePath)) {
+      return;
+    }
+
+    const fileContents = fs.readFileSync(filePath);
+    const parsed = dotenv.parse(fileContents);
+
+    Object.entries(parsed).forEach(([key, value]) => {
+      if (!key || protectedEnvKeys.has(key)) {
+        return;
+      }
+
+      process.env[key] = value;
+    });
+  } catch (error) {
+    console.warn(`Не удалось прочитать файл переменных окружения ${filePath}:`, error.message);
+  }
+};
+
+loadEnvFile(path.join(apiRoot, '..', '.env'));
+loadEnvFile(path.join(apiRoot, '.env'));
 
 const ensurePrismaClientIsGenerated = () => {
   const schemaPath = path.join(apiRoot, 'prisma', 'schema.prisma');
