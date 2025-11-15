@@ -163,7 +163,7 @@ const startTelegramBot = () => {
             [
               {
                 text: 'Открыть приложение',
-                web_app: { url: miniAppUrl },
+                url: miniAppUrl,
               },
             ],
           ],
