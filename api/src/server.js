@@ -1,11 +1,35 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
+const crypto = require('crypto');
 
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
-const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'admin';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'adminadmin';
+const ADMIN_PUBLIC_KEY = (process.env.ADMIN_PUBLIC_KEY || '').trim();
+const ADMIN_AUTH_SCHEME = 'SSHKey';
+
+const normalizeSshPublicKey = (key) => {
+  if (!key || typeof key !== 'string') {
+    return '';
+  }
+  const trimmed = key.trim();
+  if (!trimmed) {
+    return '';
+  }
+  const [type, value] = trimmed.split(/\s+/);
+  if (!type || !value) {
+    return '';
+  }
+  return `${type} ${value}`;
+};
+
+const ADMIN_PUBLIC_KEY_NORMALIZED = normalizeSshPublicKey(ADMIN_PUBLIC_KEY);
+
+const derivePublicKeyFromPrivate = (privateKeyContent) => {
+  const privateKey = crypto.createPrivateKey({ key: privateKeyContent });
+  const publicKey = crypto.createPublicKey(privateKey);
+  return publicKey.export({ format: 'ssh' }).toString();
+};
 
 app.use(express.json());
 
@@ -20,32 +44,55 @@ app.use((req, res, next) => {
 });
 
 function isAuthorizedAdmin(req) {
+  if (!ADMIN_PUBLIC_KEY_NORMALIZED) {
+    console.warn('ADMIN_PUBLIC_KEY is not configured');
+    return false;
+  }
+
   const header = req.headers.authorization;
   if (!header || typeof header !== 'string') {
     return false;
   }
 
-  const [scheme, credentials] = header.split(' ');
-  if (scheme !== 'Basic' || !credentials) {
+  const [scheme, encodedKey] = header.split(/\s+/);
+  if (scheme !== ADMIN_AUTH_SCHEME || !encodedKey) {
     return false;
   }
 
-  let decoded;
+  let privateKeyContent;
   try {
-    decoded = Buffer.from(credentials, 'base64').toString('utf8');
+    privateKeyContent = Buffer.from(encodedKey, 'base64').toString('utf8');
   } catch (error) {
     return false;
   }
 
-  const separatorIndex = decoded.indexOf(':');
-  if (separatorIndex === -1) {
+  if (!privateKeyContent.trim()) {
     return false;
   }
 
-  const username = decoded.slice(0, separatorIndex);
-  const password = decoded.slice(separatorIndex + 1);
+  try {
+    const derivedPublicKey = normalizeSshPublicKey(derivePublicKeyFromPrivate(privateKeyContent));
+    return derivedPublicKey === ADMIN_PUBLIC_KEY_NORMALIZED;
+  } catch (error) {
+    console.warn('Failed to derive admin public key from provided key', error);
 
-  return username === ADMIN_LOGIN && password === ADMIN_PASSWORD;
+    const normalizedProvided = normalizeSshPublicKey(privateKeyContent);
+    if (normalizedProvided && normalizedProvided === ADMIN_PUBLIC_KEY_NORMALIZED) {
+      return true;
+    }
+
+    try {
+      const publicKeyFromInput = crypto
+        .createPublicKey({ key: privateKeyContent, format: 'ssh' })
+        .export({ format: 'ssh' })
+        .toString();
+      return normalizeSshPublicKey(publicKeyFromInput) === ADMIN_PUBLIC_KEY_NORMALIZED;
+    } catch (secondaryError) {
+      console.warn('Provided key does not match configured admin key', secondaryError);
+    }
+
+    return false;
+  }
 }
 
 function requireAdmin(req, res, next) {
@@ -53,9 +100,13 @@ function requireAdmin(req, res, next) {
     return next();
   }
 
-  res.setHeader('WWW-Authenticate', 'Basic realm="Admin"');
+  res.setHeader('WWW-Authenticate', `${ADMIN_AUTH_SCHEME} realm="Admin"`);
   return res.status(401).json({ error: 'Unauthorized' });
 }
+
+app.get('/auth/verify', requireAdmin, (req, res) => {
+  res.json({ status: 'ok' });
+});
 
 function parsePagination(query) {
   const page = Math.max(parseInt(query.page, 10) || 1, 1);

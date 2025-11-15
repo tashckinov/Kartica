@@ -3,16 +3,25 @@
     <div v-if="!isAuthenticated" class="admin-auth">
       <form class="admin-auth-card" @submit.prevent="handleLogin">
         <h1>Вход в админку</h1>
+        <p class="muted">
+          Для доступа загрузите приватный SSH-ключ администратора. Он будет проверен по публичному ключу,
+          указанному на сервере.
+        </p>
         <label class="form-field">
-          <span>Логин</span>
-          <input v-model.trim="username" type="text" autocomplete="username" required />
+          <span>Файл приватного ключа</span>
+          <input
+            ref="keyFileInput"
+            type="file"
+            accept=".key,.pem,.ppk,.txt,.pub"
+            @change="handleKeyFileChange"
+          />
         </label>
-        <label class="form-field">
-          <span>Пароль</span>
-          <input v-model="password" type="password" autocomplete="current-password" required />
-        </label>
+        <p v-if="keyFileName" class="muted">Выбран файл: {{ keyFileName }}</p>
+        <p v-if="keyReadError" class="form-error">{{ keyReadError }}</p>
         <p v-if="loginError" class="form-error">{{ loginError }}</p>
-        <button type="submit" class="primary-button">Войти</button>
+        <button type="submit" class="primary-button" :disabled="!canSubmitKey">
+          {{ loginPending ? 'Проверка ключа...' : 'Войти' }}
+        </button>
       </form>
     </div>
     <div v-else class="admin-dashboard">
@@ -152,25 +161,43 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { apiBaseUrl } from './apiConfig.js';
 
-const ADMIN_LOGIN = 'admin';
-const ADMIN_PASSWORD = 'adminadmin';
-const STORAGE_KEY = 'kartica-admin-authenticated';
+const ADMIN_AUTH_SCHEME = 'SSHKey';
+const STORAGE_KEY = 'kartica-admin-auth-token';
+const LEGACY_STORAGE_KEY = 'kartica-admin-authenticated';
 
 const adminAuthToken = ref('');
+const privateKeyContent = ref('');
+const keyFileName = ref('');
+const keyReadError = ref('');
+const loginError = ref('');
+const loginPending = ref(false);
+const isReadingKey = ref(false);
+const keyFileInput = ref(null);
+const isAuthenticated = ref(false);
 
-const computeAdminAuthToken = () => {
-  const raw = `${ADMIN_LOGIN}:${ADMIN_PASSWORD}`;
+const normalizePrivateKey = (value) => {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  return value.replace(/\r\n?/g, '\n');
+};
+
+const encodePrivateKey = (value) => {
   if (typeof globalThis !== 'undefined' && typeof globalThis.btoa === 'function') {
-    return globalThis.btoa(raw);
+    return globalThis.btoa(value);
   }
   if (typeof Buffer !== 'undefined') {
-    return Buffer.from(raw, 'utf8').toString('base64');
+    return Buffer.from(value, 'utf8').toString('base64');
   }
-  return '';
+  throw new Error('Base64 encoding is not supported in this environment');
 };
+
+const canSubmitKey = computed(
+  () => Boolean(privateKeyContent.value.trim()) && !loginPending.value && !isReadingKey.value,
+);
 
 const applyAuthHeaders = (headers = {}) => {
   const base = headers || {};
@@ -179,7 +206,7 @@ const applyAuthHeaders = (headers = {}) => {
   }
   return {
     ...base,
-    Authorization: `Basic ${adminAuthToken.value}`,
+    Authorization: `${ADMIN_AUTH_SCHEME} ${adminAuthToken.value}`,
   };
 };
 
@@ -192,11 +219,6 @@ const buildApiUrl = (path, params = {}) => {
   });
   return url.toString();
 };
-
-const username = ref('');
-const password = ref('');
-const loginError = ref('');
-const isAuthenticated = ref(false);
 
 const storage = typeof window !== 'undefined' ? window.localStorage : null;
 
@@ -261,17 +283,87 @@ const clearAuthState = () => {
   isAuthenticated.value = false;
   adminAuthToken.value = '';
   storage?.removeItem(STORAGE_KEY);
+  storage?.removeItem(LEGACY_STORAGE_KEY);
   resetActiveGroup();
-  username.value = '';
-  password.value = '';
+  loginPending.value = false;
+  isReadingKey.value = false;
   loginError.value = '';
+  keyReadError.value = '';
+  privateKeyContent.value = '';
+  keyFileName.value = '';
+  if (keyFileInput.value) {
+    keyFileInput.value.value = '';
+  }
 };
 
 const handleUnauthorized = () => {
-  const message = 'Сессия администратора истекла. Войдите снова.';
+  const message = 'Доступ администратора отклонён. Загрузите ключ снова.';
   clearAuthState();
   showFeedback('error', message);
   return message;
+};
+
+const handleKeyFileChange = async (event) => {
+  keyReadError.value = '';
+  loginError.value = '';
+
+  const files = event?.target?.files;
+  if (!files || files.length === 0) {
+    privateKeyContent.value = '';
+    keyFileName.value = '';
+    return;
+  }
+
+  const [file] = files;
+  keyFileName.value = file?.name || '';
+  isReadingKey.value = true;
+
+  try {
+    const content = await file.text();
+    const normalized = normalizePrivateKey(content);
+    if (!normalized.trim()) {
+      privateKeyContent.value = '';
+      keyReadError.value = 'Файл ключа пустой';
+      return;
+    }
+    privateKeyContent.value = normalized;
+  } catch (error) {
+    console.error('Failed to read admin key file', error);
+    privateKeyContent.value = '';
+    keyReadError.value = 'Не удалось прочитать файл ключа';
+  } finally {
+    isReadingKey.value = false;
+  }
+};
+
+const verifyAdminKey = async (token) => {
+  const response = await fetch(buildApiUrl('/auth/verify'), {
+    headers: {
+      Authorization: `${ADMIN_AUTH_SCHEME} ${token}`,
+    },
+  });
+
+  if (response.ok) {
+    return;
+  }
+
+  if (response.status === 401) {
+    throw new Error('Предоставленный ключ не подходит для входа');
+  }
+
+  try {
+    const data = await response.json();
+    if (data && typeof data === 'object' && data.error) {
+      throw new Error(data.error);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message && error.message !== 'Unexpected end of JSON input') {
+      throw error;
+    }
+    // ignore empty or malformed JSON bodies
+  }
+
+  throw new Error(`Не удалось подтвердить ключ администратора (код ${response.status})`);
 };
 
 const parseErrorResponse = async (response) => {
@@ -429,17 +521,38 @@ const handleSelectGroup = async (groupId) => {
   await fetchGroupDetails(groupId);
 };
 
-const handleLogin = () => {
+const handleLogin = async () => {
   loginError.value = '';
-  if (username.value.trim() !== ADMIN_LOGIN || password.value !== ADMIN_PASSWORD) {
-    loginError.value = 'Неверный логин или пароль';
+
+  if (isReadingKey.value) {
+    loginError.value = 'Дождитесь завершения чтения файла ключа';
     return;
   }
-  adminAuthToken.value = computeAdminAuthToken();
-  isAuthenticated.value = true;
-  storage?.setItem(STORAGE_KEY, '1');
-  showFeedback('success', 'Вы успешно вошли в админку');
-  fetchGroups();
+
+  if (!privateKeyContent.value.trim()) {
+    loginError.value = 'Загрузите файл приватного ключа';
+    return;
+  }
+
+  const normalizedKey = privateKeyContent.value;
+  loginPending.value = true;
+
+  try {
+    const token = encodePrivateKey(normalizedKey);
+    await verifyAdminKey(token);
+    adminAuthToken.value = token;
+    isAuthenticated.value = true;
+    storage?.setItem(STORAGE_KEY, token);
+    showFeedback('success', 'Вы успешно вошли в админку');
+    await fetchGroups();
+  } catch (error) {
+    console.error('Failed to verify admin key', error);
+    adminAuthToken.value = '';
+    isAuthenticated.value = false;
+    loginError.value = error instanceof Error && error.message ? error.message : 'Не удалось подтвердить ключ администратора';
+  } finally {
+    loginPending.value = false;
+  }
 };
 
 const logout = () => {
@@ -588,16 +701,22 @@ const retryActiveGroup = () => {
   }
 };
 
-const restoreSession = () => {
+const restoreSession = async () => {
   try {
-    const stored = storage?.getItem(STORAGE_KEY);
-    if (stored === '1') {
-      adminAuthToken.value = computeAdminAuthToken();
+    const legacyFlag = storage?.getItem(LEGACY_STORAGE_KEY);
+    if (legacyFlag) {
+      storage?.removeItem(LEGACY_STORAGE_KEY);
+    }
+
+    const storedToken = storage?.getItem(STORAGE_KEY);
+    if (storedToken) {
+      adminAuthToken.value = storedToken;
       isAuthenticated.value = true;
-      fetchGroups();
+      await fetchGroups();
     }
   } catch (error) {
     console.warn('Не удалось восстановить сессию администратора', error);
+    clearAuthState();
   }
 };
 
