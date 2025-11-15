@@ -45,6 +45,7 @@ COPY --from=build /app/api/package-lock.json ./api/package-lock.json
 COPY --from=build /app/api/node_modules ./api/node_modules
 COPY --from=build /app/api/prisma ./api/prisma
 COPY --from=build /app/api/src ./api/src
+COPY --from=build /app/api/bot.js ./api/bot.js
 COPY --from=build /app/dist ./dist
 
 EXPOSE 4000
