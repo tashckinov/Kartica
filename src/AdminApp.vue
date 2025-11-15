@@ -475,13 +475,34 @@ const copyOwnerClaimToken = async () => {
 };
 
 const buildApiUrl = (path, params = {}) => {
-  const url = new URL(path, `${apiBaseUrl}/`);
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') {
+  const normalizedPath = path.startsWith('/') ? path.slice(1) : path;
+  const filteredParams = Object.entries(params).filter(
+    ([, value]) => value !== undefined && value !== null && value !== ''
+  );
+
+  const isAbsoluteBaseUrl = /^[a-z][\w+.-]*:/.test(apiBaseUrl);
+  if (isAbsoluteBaseUrl) {
+    const url = new URL(normalizedPath || '.', `${apiBaseUrl.replace(/\/$/, '')}/`);
+    filteredParams.forEach(([key, value]) => {
       url.searchParams.set(key, value);
-    }
+    });
+    return url.toString();
+  }
+
+  const baseWithLeadingSlash = apiBaseUrl.startsWith('/') ? apiBaseUrl : `/${apiBaseUrl}`;
+  const base = baseWithLeadingSlash.replace(/\/$/, '') || '/';
+  const fullPath = normalizedPath ? `${base}${base === '/' ? '' : '/'}${normalizedPath}` : base;
+
+  if (!filteredParams.length) {
+    return fullPath;
+  }
+
+  const searchParams = new URLSearchParams();
+  filteredParams.forEach(([key, value]) => {
+    searchParams.set(key, value);
   });
-  return url.toString();
+
+  return `${fullPath}?${searchParams.toString()}`;
 };
 
 const getCardWord = (count) => {

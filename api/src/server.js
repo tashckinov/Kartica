@@ -52,9 +52,15 @@ ensurePrismaClientIsGenerated();
 
 const { PrismaClient } = require('@prisma/client');
 
+const { startTelegramBot } = require('../bot');
+
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
+const SERVE_CLIENT = String(process.env.SERVE_CLIENT || '').toLowerCase();
+const shouldServeClient = SERVE_CLIENT !== 'false';
+const clientDistPath = path.join(__dirname, '..', '..', 'dist');
+const clientIndexPath = path.join(clientDistPath, 'index.html');
 
 const ADMIN_TOKEN_SECRET = (process.env.ADMIN_TOKEN_SECRET || '').trim();
 const ADMIN_TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
@@ -1098,12 +1104,28 @@ app.delete('/groups/:id', requireAdmin, async (req, res) => {
   }
 });
 
+if (shouldServeClient && fs.existsSync(clientIndexPath)) {
+  app.use(express.static(clientDistPath));
+  app.get(/^\/(?!api(?:\b|\/)).*/, (req, res) => {
+    res.sendFile(clientIndexPath);
+  });
+}
+
 app.use((req, res) => {
-  res.status(404).json({ error: 'Not found' });
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
+  if (shouldServeClient && fs.existsSync(clientIndexPath)) {
+    return res.sendFile(clientIndexPath);
+  }
+
+  return res.status(404).json({ error: 'Not found' });
 });
 
 const server = app.listen(PORT, () => {
   console.log(`API server listening on http://localhost:${PORT}`);
+  startTelegramBot();
 });
 
 async function shutdown() {
