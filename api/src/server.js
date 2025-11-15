@@ -88,6 +88,7 @@ const STATIC_ALLOWED_ORIGINS = (configuredAllowedOriginsRaw
 const hasExplicitAllowedOrigins = Boolean(configuredAllowedOriginsRaw);
 
 const ADMIN_GROUP_OWNERSHIP_ERROR = 'Можно изменять только созданные вами группы';
+const GROUP_SEARCH_QUERY_MAX_LENGTH = 120;
 
 app.use(express.json());
 
@@ -779,18 +780,64 @@ app.get('/groups', async (req, res) => {
 
   try {
     const { page, pageSize, skip } = parsePagination(req.query);
-    const whereClause = adminUserId ? { ownerId: adminUserId } : {};
+    const rawSearchQuery =
+      typeof req.query.search === 'string'
+        ? req.query.search
+        : typeof req.query.query === 'string'
+        ? req.query.query
+        : typeof req.query.q === 'string'
+        ? req.query.q
+        : '';
+    const searchQuery = sanitizeString(rawSearchQuery, GROUP_SEARCH_QUERY_MAX_LENGTH);
 
-    const [total, groups] = await Promise.all([
-      prisma.group.count({ where: whereClause }),
-      prisma.group.findMany({
-        where: whereClause,
-        skip,
-        take: pageSize,
+    const filters = [];
+
+    if (adminUserId) {
+      filters.push({ ownerId: adminUserId });
+    }
+
+    let whereClause = {};
+    if (filters.length === 1) {
+      whereClause = filters[0];
+    } else if (filters.length > 1) {
+      whereClause = { AND: filters };
+    }
+
+    let groups = [];
+    let total = 0;
+
+    if (searchQuery) {
+      const normalizedSearch = searchQuery.toLocaleLowerCase();
+      const baseGroups = await prisma.group.findMany({
+        where: filters.length ? whereClause : undefined,
         orderBy: { id: 'asc' },
         include: { _count: { select: { cards: true } } },
-      }),
-    ]);
+      });
+
+      const filteredGroups = baseGroups.filter((group) => {
+        const title = group.title?.toLocaleLowerCase?.() || '';
+        const description = group.description?.toLocaleLowerCase?.() || '';
+        return (
+          title.includes(normalizedSearch) || description.includes(normalizedSearch)
+        );
+      });
+
+      total = filteredGroups.length;
+      groups = filteredGroups.slice(skip, skip + pageSize);
+    } else {
+      const [count, paginatedGroups] = await Promise.all([
+        prisma.group.count({ where: filters.length ? whereClause : undefined }),
+        prisma.group.findMany({
+          where: filters.length ? whereClause : undefined,
+          skip,
+          take: pageSize,
+          orderBy: { id: 'asc' },
+          include: { _count: { select: { cards: true } } },
+        }),
+      ]);
+      total = count;
+      groups = paginatedGroups;
+    }
 
     res.json({
       data: groups.map((group) => serializeGroupSummary(group)),

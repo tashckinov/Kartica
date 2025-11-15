@@ -124,6 +124,96 @@
           </div>
         </div>
       </template>
+      <template v-else-if="activeTab === 'search'">
+        <div class="search-screen">
+          <header class="search-header">
+            <h2>Поиск групп</h2>
+            <p>Найдите нужную группу карточек по названию или описанию.</p>
+          </header>
+          <form class="search-form" role="search" @submit.prevent="performSearch">
+            <label class="search-field">
+              <span class="visually-hidden">Введите название или тему группы</span>
+              <input
+                v-model="searchQuery"
+                type="search"
+                inputmode="search"
+                autocomplete="off"
+                placeholder="Например, «Английские глаголы»"
+                :disabled="isSearchLoading"
+              />
+            </label>
+            <button class="search-submit" type="submit" :disabled="isSearchLoading || !canSubmitSearch">
+              {{ isSearchLoading ? 'Ищем…' : 'Найти' }}
+            </button>
+          </form>
+          <div v-if="isSearchLoading" class="search-state" aria-live="polite">
+            <span>Ищем группы…</span>
+          </div>
+          <div v-else-if="searchError" class="search-state search-error" role="alert">
+            <span>{{ searchError }}</span>
+            <button class="search-retry" type="button" @click="performSearch" :disabled="isSearchLoading">
+              Попробовать снова
+            </button>
+          </div>
+          <section v-else-if="searchResults.length" class="topics-grid search-results">
+            <article
+              v-for="topic in searchResults"
+              :key="topic.id"
+              class="topic-card"
+              role="button"
+              tabindex="0"
+              :data-topic-card="topic.id"
+              @click="openTopicFromSearch(topic.id)"
+              @keydown.enter.prevent="openTopicFromSearch(topic.id)"
+              @keydown.space.prevent="openTopicFromSearch(topic.id)"
+            >
+              <button
+                class="topic-card-favorite"
+                type="button"
+                :aria-pressed="isTopicFavorite(topic.id) ? 'true' : 'false'"
+                :data-favorite="isTopicFavorite(topic.id) ? 'true' : 'false'"
+                @click.stop="toggleFavorite(topic.id, { preserveCard: true })"
+              >
+                <span class="visually-hidden">
+                  {{ favoriteToggleText(topic.id) }}
+                </span>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    :d="
+                      isTopicFavorite(topic.id)
+                        ? 'M12 4.5 14.89 9.8l5.61.82-4.05 3.95.95 5.55L12 16.98 6.6 20.12l.95-5.55L3.5 10.62l5.61-.82z'
+                        : 'm12 5.19 1.96 3.98 4.4.64-3.18 3.1.75 4.37L12 14.77l-3.93 2.51.75-4.37-3.18-3.1 4.4-.64z'
+                    "
+                    :fill="isTopicFavorite(topic.id) ? 'currentColor' : 'none'"
+                  />
+                </svg>
+              </button>
+              <div class="topic-card-cover">
+                <img v-if="topic.coverImage" :src="topic.coverImage" :alt="topic.title" loading="lazy" />
+                <div v-else class="topic-card-placeholder" aria-hidden="true"></div>
+                <span class="topic-card-badge">
+                  {{ getCardsCount(topic) }} {{ getCardWord(getCardsCount(topic)) }}
+                </span>
+              </div>
+              <div class="topic-card-body">
+                <h2 class="topic-card-title">{{ topic.title }}</h2>
+                <p v-if="topic.subtitle" class="topic-card-subtitle">{{ topic.subtitle }}</p>
+              </div>
+            </article>
+          </section>
+          <p v-else-if="searchPerformed" class="search-empty">
+            Ничего не найдено. Попробуйте изменить запрос.
+          </p>
+          <p v-else class="search-hint">Введите запрос, чтобы найти нужную группу.</p>
+        </div>
+      </template>
       <template v-else>
         <section v-if="activeTopic" class="topic-detail" :data-topic-detail="activeTopic.id">
           <header class="topic-detail-header">
@@ -526,6 +616,12 @@ const topicDetailsError = ref('');
 const activeTab = ref('home');
 const activeTopicId = ref(null);
 
+const searchQuery = ref('');
+const searchResults = ref([]);
+const searchPerformed = ref(false);
+const isSearchLoading = ref(false);
+const searchError = ref('');
+
 const favoriteStorageKey = 'kartica:favorites';
 const favoriteTopicIds = ref([]);
 const sessionRemovedFavoriteTopicIds = ref([]);
@@ -544,6 +640,7 @@ const studyDialog = ref(null);
 const MEMORIZE_BASE_REQUIRED_SUCCESS = 3;
 const MEMORIZE_FAST_TRACK_SUCCESS = 2;
 const memorizeStoragePrefix = 'kartica:memorize:';
+const SEARCH_RESULTS_PAGE_SIZE = 24;
 
 const memorizeState = reactive({
   isOpen: false,
@@ -627,6 +724,8 @@ const currentTopics = computed(() =>
     .map((topicId) => getTopicById(topicId))
     .filter((topic) => topic !== null)
 );
+
+const canSubmitSearch = computed(() => Boolean(searchQuery.value.trim()));
 
 const favoriteTopicsSet = computed(() => new Set(favoriteTopicIds.value));
 const favoriteTopics = computed(() =>
@@ -1579,6 +1678,55 @@ const closeMemorizeMode = () => {
   resetMemorizeState();
 };
 
+const performSearch = async () => {
+  const query = searchQuery.value.trim();
+  if (!query || isSearchLoading.value) {
+    return;
+  }
+  isSearchLoading.value = true;
+  searchError.value = '';
+  searchPerformed.value = true;
+  try {
+    const response = await fetch(
+      buildApiUrl('/groups', {
+        page: 1,
+        pageSize: SEARCH_RESULTS_PAGE_SIZE,
+        search: query,
+      })
+    );
+    if (!response.ok) {
+      throw new Error(`Request failed with status ${response.status}`);
+    }
+    const payload = await response.json();
+    const rawResults = Array.isArray(payload?.data) ? payload.data : [];
+    const normalizedTopics = rawResults
+      .map((group) => {
+        const existing = getTopicById(group.id);
+        return upsertTopic({
+          id: group.id,
+          title: group.title,
+          subtitle: group.description || existing?.subtitle || '',
+          description: group.description || existing?.description || '',
+          coverImage: existing?.coverImage ?? null,
+          cards: existing?.cards ?? [],
+          cardsCount:
+            typeof group.cardsCount === 'number'
+              ? group.cardsCount
+              : existing?.cardsCount ??
+                (Array.isArray(existing?.cards) ? existing.cards.length : 0),
+          hasCardsLoaded: existing?.hasCardsLoaded ?? false,
+        });
+      })
+      .filter((topic) => topic !== null);
+    searchResults.value = normalizedTopics;
+  } catch (error) {
+    searchError.value = 'Не удалось выполнить поиск. Попробуйте ещё раз.';
+    console.error('Failed to search groups', error);
+  } finally {
+    isSearchLoading.value = false;
+  }
+};
+
 const loadTopics = async (page = topicsPagination.page || 1) => {
   if (isTopicsLoading.value) return;
   const targetPage = Math.max(page, 1);
@@ -1709,6 +1857,8 @@ const openTopicFromFavorites = async (topicId) => {
   showTopic(topicId);
 };
 
+const openTopicFromSearch = (topicId) => openTopicFromFavorites(topicId);
+
 const showTopic = async (topicId) => {
   if (!topicId) return;
   topicDetailsError.value = '';
@@ -1794,6 +1944,16 @@ const getCardWord = (count) => {
   if (normalized >= 2 && normalized <= 4) return 'карточки';
   return 'карточек';
 };
+
+watch(searchQuery, (value) => {
+  if (typeof value === 'string' && value.trim()) {
+    searchError.value = '';
+    return;
+  }
+  searchResults.value = [];
+  searchPerformed.value = false;
+  searchError.value = '';
+});
 
 watch(
   favoriteTopicIds,
