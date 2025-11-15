@@ -14,6 +14,7 @@ const ADMIN_DISPLAY_NAME_MAX_LENGTH = 120;
 const ADMIN_USERNAME_MAX_LENGTH = 64;
 const ADMIN_NAME_PART_MAX_LENGTH = 60;
 const ADMIN_IDENTITY_SECRET_MAX_LENGTH = 512;
+const ADMIN_CLAIM_TOKEN_LENGTH_BYTES = 32;
 const ADMIN_TOKEN_VERIFICATION_ERROR = 'Не удалось подтвердить данные администратора.';
 
 const DEFAULT_ALLOWED_ORIGINS = [
@@ -136,6 +137,10 @@ const sanitizeSecretString = (value) => {
 const hashAdminIdentitySecret = (secret) =>
   crypto.createHash('sha256').update(secret, 'utf8').digest('hex');
 
+const generateAdminClaimToken = () => crypto.randomBytes(ADMIN_CLAIM_TOKEN_LENGTH_BYTES).toString('hex');
+
+const hashAdminClaimToken = (token) => hashAdminIdentitySecret(token);
+
 const areSecretHashesEqual = (hashA, hashB) => {
   if (!hashA || !hashB) {
     return false;
@@ -153,6 +158,15 @@ const areSecretHashesEqual = (hashA, hashB) => {
   } catch (error) {
     return false;
   }
+};
+
+const doesClaimTokenMatch = (storedHash, token) => {
+  if (!storedHash || !token) {
+    return false;
+  }
+
+  const providedHash = hashAdminClaimToken(token);
+  return areSecretHashesEqual(storedHash, providedHash);
 };
 
 const normalizeAdminUser = (rawUser) => {
@@ -525,6 +539,7 @@ app.post('/auth/token', async (req, res) => {
   try {
     const userInput = buildAdminUserFromRequest(req.body);
     const secret = sanitizeSecretString(req.body?.secret);
+    const claimToken = sanitizeSecretString(req.body?.claimToken);
 
     if (!secret) {
       const error = new Error('Не передан секрет администратора.');
@@ -541,23 +556,88 @@ app.post('/auth/token', async (req, res) => {
       where: { id: userInput.id },
     });
 
+    let generatedClaimToken = '';
+
+    const ensureClaimTokenHash = () => {
+      if (!generatedClaimToken) {
+        generatedClaimToken = generateAdminClaimToken();
+      }
+      return hashAdminClaimToken(generatedClaimToken);
+    };
+
     if (!identityRecord) {
+      const existingGroups = await prisma.group.count({ where: { ownerId: userInput.id } });
+      if (existingGroups > 0) {
+        const error = new Error(
+          claimToken
+            ? 'Не удалось подтвердить токен владельца.'
+            : 'Для доступа к уже созданной группе нужен токен подтверждения владельца.',
+        );
+        error.statusCode = 403;
+        throw error;
+      }
+
+      const claimTokenHash = ensureClaimTokenHash();
+
       identityRecord = await prisma.adminIdentity.create({
         data: {
           id: userInput.id,
           secretHash,
+          claimTokenHash,
           displayName: requestedDisplayName || null,
         },
       });
-    } else if (!areSecretHashesEqual(identityRecord.secretHash, secretHash)) {
-      const error = new Error(ADMIN_TOKEN_VERIFICATION_ERROR);
-      error.statusCode = 403;
-      throw error;
-    } else if (requestedDisplayName && requestedDisplayName !== identityRecord.displayName) {
-      identityRecord = await prisma.adminIdentity.update({
-        where: { id: identityRecord.id },
-        data: { displayName: requestedDisplayName },
-      });
+    } else {
+      const updates = {};
+
+      if (!identityRecord.claimTokenHash) {
+        updates.claimTokenHash = ensureClaimTokenHash();
+      }
+
+      if (!identityRecord.secretHash) {
+        if (!claimToken) {
+          const error = new Error('Укажите токен владельца, чтобы подтвердить доступ.');
+          error.statusCode = 403;
+          throw error;
+        }
+        if (!doesClaimTokenMatch(identityRecord.claimTokenHash, claimToken)) {
+          const error = new Error('Не удалось подтвердить токен владельца.');
+          error.statusCode = 403;
+          throw error;
+        }
+
+        updates.secretHash = secretHash;
+        if (requestedDisplayName) {
+          updates.displayName = requestedDisplayName;
+        }
+      } else {
+        if (!areSecretHashesEqual(identityRecord.secretHash, secretHash)) {
+          const error = new Error(ADMIN_TOKEN_VERIFICATION_ERROR);
+          error.statusCode = 403;
+          throw error;
+        }
+
+        if (claimToken && identityRecord.claimTokenHash) {
+          if (!doesClaimTokenMatch(identityRecord.claimTokenHash, claimToken)) {
+            const error = new Error('Не удалось подтвердить токен владельца.');
+            error.statusCode = 403;
+            throw error;
+          }
+        } else if (identityRecord.claimTokenHash) {
+          updates.claimTokenHash = ensureClaimTokenHash();
+        }
+
+        if (requestedDisplayName && requestedDisplayName !== identityRecord.displayName) {
+          updates.displayName = requestedDisplayName;
+        }
+      }
+
+      if (Object.keys(updates).length > 0) {
+        identityRecord = await prisma.adminIdentity.update({
+          where: { id: identityRecord.id },
+          data: updates,
+        });
+      }
     }
 
     const tokenUser = {
@@ -577,7 +657,12 @@ app.post('/auth/token', async (req, res) => {
 
     const { token, expiresAt } = generateAdminToken(normalizedUser);
 
-    return res.json({ token, expiresAt, user: normalizedUser });
+    const responsePayload = { token, expiresAt, user: normalizedUser };
+    if (generatedClaimToken) {
+      responsePayload.claimToken = generatedClaimToken;
+    }
+
+    return res.json(responsePayload);
   } catch (error) {
     console.warn('Failed to issue admin token', error);
     const statusCode =
@@ -599,6 +684,29 @@ app.get('/auth/session', requireAdmin, (req, res) => {
 
 app.post('/auth/logout', (req, res) => {
   res.status(204).send();
+});
+
+app.post('/auth/claim-token', requireAdmin, async (req, res) => {
+  try {
+    const claimToken = generateAdminClaimToken();
+    const claimTokenHash = hashAdminClaimToken(claimToken);
+
+    await prisma.adminIdentity.upsert({
+      where: { id: req.adminUserId },
+      update: { claimTokenHash },
+      create: {
+        id: req.adminUserId,
+        secretHash: null,
+        claimTokenHash,
+        displayName: null,
+      },
+    });
+
+    res.json({ claimToken });
+  } catch (error) {
+    console.error('Failed to rotate admin claim token', error);
+    res.status(500).json({ error: 'Не удалось обновить токен владельца' });
+  }
 });
 
 app.get('/groups', async (req, res) => {

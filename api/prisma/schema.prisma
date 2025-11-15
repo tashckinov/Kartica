@@ -30,9 +30,10 @@ model Card {
 }
 
 model AdminIdentity {
-  id          String   @id
-  secretHash  String
-  displayName String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id
+  secretHash     String?
+  claimTokenHash String?
+  displayName    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }

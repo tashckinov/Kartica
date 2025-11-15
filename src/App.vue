@@ -27,6 +27,23 @@
                 Этот идентификатор нужен, чтобы распознавать владельца групп. Храните его в браузере, чтобы
                 редактировать созданные материалы.
               </p>
+              <div class="profile-claim" data-admin-claim>
+                <span class="profile-claim-label">Токен владельца:</span>
+                <template v-if="adminIdentity.claimToken">
+                  <code class="profile-claim-value">{{ adminIdentity.claimToken }}</code>
+                  <button type="button" class="profile-claim-copy" @click="copyClaimToken">
+                    {{ adminClaimTokenCopy.copied ? 'Скопировано!' : 'Скопировать токен' }}
+                  </button>
+                </template>
+                <template v-else>
+                  <span class="profile-claim-missing">Получите новый токен в админке.</span>
+                </template>
+              </div>
+              <p v-if="adminClaimTokenCopy.error" class="profile-admin-error">{{ adminClaimTokenCopy.error }}</p>
+              <p class="profile-claim-hint">
+                Токен владельца подтверждает ваши права на уже созданные группы. После входа в админку он обновится
+                автоматически — сохраните его вместе с секретом, чтобы выпускать новые ссылки.
+              </p>
             </div>
           </div>
           <div class="profile-card profile-admin">
@@ -53,6 +70,10 @@
               </button>
             </div>
             <p v-if="adminLink.error" class="profile-admin-error">{{ adminLink.error }}</p>
+            <p v-else-if="!adminIdentity.claimToken" class="profile-admin-warning">
+              Откройте панель администратора с актуальным токеном, чтобы синхронизировать токен владельца и получить
+              новую ссылку.
+            </p>
             <div v-if="hasAdminLink" class="profile-admin-link">
               <input type="text" :value="adminLink.url" readonly />
               <a :href="adminLink.url" target="_blank" rel="noopener" class="profile-admin-open">Открыть панель</a>
@@ -985,9 +1006,15 @@ const adminIdentity = reactive({
   id: '',
   displayName: '',
   secret: '',
+  claimToken: '',
 });
 
 const adminIdentityCopy = reactive({
+  copied: false,
+  error: '',
+});
+
+const adminClaimTokenCopy = reactive({
   copied: false,
   error: '',
 });
@@ -1052,6 +1079,7 @@ const loadStoredIdentity = () => {
       id,
       displayName: sanitizeIdentityString(parsed?.displayName, ADMIN_IDENTITY_NAME_MAX_LENGTH),
       secret: sanitizeIdentitySecret(parsed?.secret),
+      claimToken: sanitizeIdentitySecret(parsed?.claimToken),
     };
   } catch (error) {
     console.warn('Не удалось загрузить идентификатор администратора', error);
@@ -1068,6 +1096,7 @@ const persistAdminIdentity = () => {
       id: sanitizeIdentityString(adminIdentity.id, ADMIN_IDENTITY_ID_MAX_LENGTH),
       displayName: sanitizeIdentityString(adminIdentity.displayName, ADMIN_IDENTITY_NAME_MAX_LENGTH),
       secret: sanitizeIdentitySecret(adminIdentity.secret),
+      claimToken: sanitizeIdentitySecret(adminIdentity.claimToken),
     };
     localStorage.setItem(ADMIN_IDENTITY_STORAGE_KEY, JSON.stringify(payload));
   } catch (error) {
@@ -1080,6 +1109,7 @@ const setAdminIdentity = (identity) => {
   adminIdentity.displayName =
     sanitizeIdentityString(identity?.displayName, ADMIN_IDENTITY_NAME_MAX_LENGTH) || '';
   adminIdentity.secret = sanitizeIdentitySecret(identity?.secret);
+  adminIdentity.claimToken = sanitizeIdentitySecret(identity?.claimToken);
 };
 
 const initializeAdminIdentity = () => {
@@ -1120,6 +1150,17 @@ const adminDisplayNameModel = computed({
   },
 });
 
+const handleIdentityStorageEvent = (event) => {
+  if (event && event.key !== ADMIN_IDENTITY_STORAGE_KEY) {
+    return;
+  }
+  const storedIdentity = loadStoredIdentity();
+  if (storedIdentity) {
+    setAdminIdentity(storedIdentity);
+    adminIdentityInitialized.value = true;
+  }
+};
+
 const adminLink = reactive({
   url: '',
   loading: false,
@@ -1156,6 +1197,9 @@ const readApiErrorMessage = async (response, fallbackMessage) => {
 };
 
 const requestAdminLink = async () => {
+  if (adminLink.loading) {
+    return;
+  }
   adminLink.loading = true;
   adminLink.error = '';
   adminLink.copied = false;
@@ -1177,6 +1221,7 @@ const requestAdminLink = async () => {
       body: JSON.stringify({
         userId: adminIdentity.id,
         secret: adminIdentity.secret,
+        claimToken: adminIdentity.claimToken,
         profile: profilePayload,
       }),
     });
@@ -1189,6 +1234,11 @@ const requestAdminLink = async () => {
     const data = await response.json();
     if (!data || typeof data.token !== 'string' || !data.token.trim()) {
       throw new Error('Сервер не вернул токен доступа.');
+    }
+
+    if (typeof data.claimToken === 'string' && data.claimToken.trim()) {
+      adminIdentity.claimToken = sanitizeIdentitySecret(data.claimToken);
+      persistAdminIdentity();
     }
 
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -1246,6 +1296,28 @@ const copyIdentityId = async () => {
     console.warn('Failed to copy admin identity', error);
     adminIdentityCopy.error = 'Не удалось скопировать идентификатор. Скопируйте его вручную.';
     adminIdentityCopy.copied = false;
+  }
+};
+
+const copyClaimToken = async () => {
+  adminClaimTokenCopy.error = '';
+  if (!adminIdentity.claimToken) {
+    return;
+  }
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(adminIdentity.claimToken);
+      adminClaimTokenCopy.copied = true;
+      setTimeout(() => {
+        adminClaimTokenCopy.copied = false;
+      }, 2000);
+    } else {
+      throw new Error('Clipboard API недоступен');
+    }
+  } catch (error) {
+    console.warn('Failed to copy admin claim token', error);
+    adminClaimTokenCopy.error = 'Не удалось скопировать токен. Скопируйте его вручную.';
+    adminClaimTokenCopy.copied = false;
   }
 };
 
@@ -1876,6 +1948,9 @@ watch(memorizeTopic, (topic) => {
 onMounted(() => {
   loadFavoritesFromStorage();
   initializeAdminIdentity();
+  if (typeof window !== 'undefined') {
+    window.addEventListener('storage', handleIdentityStorageEvent);
+  }
   loadTopics(1);
   ensureFavoriteTopicsLoaded();
 });
@@ -1883,5 +1958,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.body.classList.remove('study-open');
   document.body.classList.remove('memorize-open');
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('storage', handleIdentityStorageEvent);
+  }
 });
 </script>

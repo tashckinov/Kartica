@@ -107,6 +107,41 @@
               </button>
             </form>
           </section>
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Токен владельца</h2>
+            </div>
+            <div class="panel-body">
+              <p class="muted">
+                Токен владельца подтверждает доступ к созданным группам. Обновите его и сохраните вместе с секретом,
+                чтобы выпускать новые ссылки из профиля.
+              </p>
+              <div class="claim-token-box" :data-empty="ownerClaimToken ? 'false' : 'true'">
+                <code v-if="ownerClaimToken" class="claim-token-value">{{ ownerClaimToken }}</code>
+                <span v-else class="claim-token-empty">Токен ещё не получен.</span>
+              </div>
+              <div class="claim-token-actions">
+                <button
+                  class="ghost-button"
+                  type="button"
+                  @click="refreshOwnerClaimToken({ force: true, silent: false })"
+                  :disabled="claimTokenLoading"
+                >
+                  {{ claimTokenLoading ? 'Обновляем…' : 'Обновить токен' }}
+                </button>
+                <button
+                  class="ghost-button"
+                  type="button"
+                  @click="copyOwnerClaimToken"
+                  :disabled="!ownerClaimToken"
+                >
+                  {{ claimTokenCopyState.copied ? 'Скопировано!' : 'Скопировать' }}
+                </button>
+              </div>
+              <p v-if="claimTokenError" class="form-error">{{ claimTokenError }}</p>
+              <p v-if="claimTokenCopyState.error" class="form-error">{{ claimTokenCopyState.error }}</p>
+            </div>
+          </section>
         </aside>
         <main class="admin-main">
           <section v-if="activeGroupLoading" class="panel">
@@ -217,6 +252,10 @@ const OWNERSHIP_ERROR_MESSAGE = 'Вы можете изменять только
 
 const ADMIN_TOKEN_STORAGE_KEY = 'karticaAdminToken';
 const ADMIN_TOKEN_EXPIRES_AT_KEY = 'karticaAdminTokenExpiresAt';
+const ADMIN_IDENTITY_STORAGE_KEY = 'kartica-admin-identity';
+const ADMIN_IDENTITY_ID_MAX_LENGTH = 128;
+const ADMIN_IDENTITY_NAME_MAX_LENGTH = 120;
+const ADMIN_IDENTITY_SECRET_MAX_LENGTH = 512;
 
 const isAuthenticated = ref(false);
 const adminUser = ref(null);
@@ -226,6 +265,11 @@ const authError = ref('');
 const tokenCheckPending = ref(false);
 const manualToken = ref('');
 const manualTokenError = ref('');
+
+const ownerClaimToken = ref('');
+const claimTokenLoading = ref(false);
+const claimTokenError = ref('');
+const claimTokenCopyState = reactive({ copied: false, error: '' });
 
 const groups = ref([]);
 const groupsLoading = ref(false);
@@ -256,6 +300,179 @@ const currentUserId = computed(() => {
   }
   return typeof id === 'string' ? id.trim() : String(id).trim();
 });
+
+const sanitizeIdentityString = (value, maxLength = ADMIN_IDENTITY_NAME_MAX_LENGTH) => {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  const stringValue = typeof value === 'string' ? value : String(value);
+  const trimmed = stringValue.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (typeof maxLength === 'number' && maxLength > 0 && trimmed.length > maxLength) {
+    return trimmed.slice(0, maxLength);
+  }
+  return trimmed;
+};
+
+const sanitizeIdentitySecret = (value) => {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  const stringValue = typeof value === 'string' ? value : String(value);
+  const trimmed = stringValue.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (trimmed.length > ADMIN_IDENTITY_SECRET_MAX_LENGTH) {
+    return trimmed.slice(0, ADMIN_IDENTITY_SECRET_MAX_LENGTH);
+  }
+  return trimmed;
+};
+
+const readStoredAdminIdentity = () => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(ADMIN_IDENTITY_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      id: sanitizeIdentityString(parsed?.id, ADMIN_IDENTITY_ID_MAX_LENGTH),
+      displayName: sanitizeIdentityString(parsed?.displayName, ADMIN_IDENTITY_NAME_MAX_LENGTH),
+      secret: sanitizeIdentitySecret(parsed?.secret),
+      claimToken: sanitizeIdentitySecret(parsed?.claimToken),
+    };
+  } catch (error) {
+    console.warn('Не удалось прочитать сохранённый профиль автора', error);
+    return null;
+  }
+};
+
+const writeStoredAdminIdentity = (payload) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      ADMIN_IDENTITY_STORAGE_KEY,
+      JSON.stringify({
+        id: sanitizeIdentityString(payload?.id, ADMIN_IDENTITY_ID_MAX_LENGTH),
+        displayName: sanitizeIdentityString(payload?.displayName, ADMIN_IDENTITY_NAME_MAX_LENGTH),
+        secret: sanitizeIdentitySecret(payload?.secret),
+        claimToken: sanitizeIdentitySecret(payload?.claimToken),
+      }),
+    );
+  } catch (error) {
+    console.warn('Не удалось сохранить данные автора', error);
+  }
+};
+
+const updateStoredAdminIdentity = (updates = {}) => {
+  const current = readStoredAdminIdentity();
+  const payload = {
+    id: updates.id !== undefined ? updates.id : current?.id,
+    displayName: updates.displayName !== undefined ? updates.displayName : current?.displayName,
+    secret: updates.secret !== undefined ? updates.secret : current?.secret,
+    claimToken: updates.claimToken !== undefined ? updates.claimToken : current?.claimToken,
+  };
+  writeStoredAdminIdentity(payload);
+  return readStoredAdminIdentity();
+};
+
+const loadOwnerClaimTokenFromStorage = () => {
+  const stored = readStoredAdminIdentity();
+  ownerClaimToken.value = stored?.claimToken || '';
+};
+
+const persistOwnerClaimToken = (claimToken) => {
+  const sanitized = sanitizeIdentitySecret(claimToken);
+  const updated = updateStoredAdminIdentity({
+    id: currentUserId.value || undefined,
+    displayName: adminUser.value?.displayName || adminUser.value?.name || undefined,
+    claimToken: sanitized,
+  });
+  ownerClaimToken.value = updated?.claimToken || sanitized || '';
+};
+
+const refreshOwnerClaimToken = async ({ force = false, silent = false } = {}) => {
+  if (!force && ownerClaimToken.value) {
+    return ownerClaimToken.value;
+  }
+
+  claimTokenLoading.value = true;
+  if (!silent) {
+    claimTokenError.value = '';
+  }
+
+  try {
+    const response = await fetch(buildApiUrl('/auth/claim-token'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...createAuthHeaders(),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseErrorResponse(response));
+    }
+
+    const data = await response.json();
+    if (!data || typeof data.claimToken !== 'string' || !data.claimToken.trim()) {
+      throw new Error('Сервер не вернул токен владельца.');
+    }
+
+    persistOwnerClaimToken(data.claimToken);
+    claimTokenError.value = '';
+
+    if (!silent) {
+      showFeedback('success', 'Токен владельца обновлён');
+    }
+
+    return ownerClaimToken.value;
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : 'Не удалось обновить токен владельца';
+    if (!silent) {
+      claimTokenError.value = message;
+      showFeedback('error', message);
+    } else {
+      console.warn('Failed to refresh claim token', error);
+    }
+    throw error;
+  } finally {
+    claimTokenLoading.value = false;
+  }
+};
+
+const copyOwnerClaimToken = async () => {
+  claimTokenCopyState.error = '';
+  if (!ownerClaimToken.value) {
+    return;
+  }
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(ownerClaimToken.value);
+      claimTokenCopyState.copied = true;
+      setTimeout(() => {
+        claimTokenCopyState.copied = false;
+      }, 2000);
+    } else {
+      throw new Error('Clipboard API недоступен');
+    }
+  } catch (error) {
+    console.warn('Failed to copy claim token', error);
+    claimTokenCopyState.error = 'Не удалось скопировать токен. Скопируйте его вручную.';
+    claimTokenCopyState.copied = false;
+  }
+};
 
 const buildApiUrl = (path, params = {}) => {
   const url = new URL(path, `${apiBaseUrl}/`);
@@ -925,6 +1142,16 @@ const establishSession = async (token, options = {}) => {
     adminToken.value = token;
     isAuthenticated.value = true;
     adminUser.value = data?.user || null;
+    const storedIdentity = updateStoredAdminIdentity({
+      id: currentUserId.value || data?.user?.id || data?.user?.user?.id,
+      displayName:
+        data?.user?.displayName ||
+        data?.user?.name ||
+        data?.user?.user?.displayName ||
+        data?.user?.user?.name ||
+        undefined,
+    });
+    ownerClaimToken.value = storedIdentity?.claimToken || ownerClaimToken.value;
     const expiresAt =
       data && typeof data.expiresAt === 'number' && Number.isFinite(data.expiresAt)
         ? data.expiresAt
@@ -940,6 +1167,13 @@ const establishSession = async (token, options = {}) => {
       showFeedback('success', 'Доступ к админке открыт');
     }
     await fetchGroups();
+    if (!ownerClaimToken.value) {
+      try {
+        await refreshOwnerClaimToken({ force: true, silent: true });
+      } catch (error) {
+        // already logged inside refreshOwnerClaimToken
+      }
+    }
     return true;
   } catch (error) {
     if (!silent) {
@@ -990,6 +1224,7 @@ const logout = async () => {
 };
 
 const initializeAuth = async () => {
+  loadOwnerClaimTokenFromStorage();
   const tokenFromUrl = extractTokenFromUrl();
   if (tokenFromUrl) {
     const success = await establishSession(tokenFromUrl, { persist: true, silent: false });
@@ -1219,6 +1454,39 @@ onBeforeUnmount(() => {
   border-color: #6366f1;
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
   background: #ffffff;
+}
+
+.claim-token-box {
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px dashed rgba(99, 102, 241, 0.3);
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+  font-size: 14px;
+  color: #1f2937;
+  word-break: break-all;
+}
+
+.claim-token-box[data-empty='true'] {
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.45);
+  color: #6b7280;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.claim-token-value {
+  display: block;
+}
+
+.claim-token-empty {
+  display: block;
+  font-size: 14px;
+}
+
+.claim-token-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .primary-button,
