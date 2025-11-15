@@ -15,35 +15,6 @@
                   autocomplete="name"
                 />
               </label>
-              <div class="profile-identity">
-                <span class="profile-identity-label">Ваш идентификатор:</span>
-                <code class="profile-identity-value">{{ adminIdentity.id }}</code>
-                <button type="button" class="profile-identity-copy" @click="copyIdentityId">
-                  {{ adminIdentityCopy.copied ? 'Скопировано!' : 'Скопировать ID' }}
-                </button>
-              </div>
-              <p v-if="adminIdentityCopy.error" class="profile-admin-error">{{ adminIdentityCopy.error }}</p>
-              <p class="profile-identity-hint">
-                Этот идентификатор нужен, чтобы распознавать владельца групп. Храните его в браузере, чтобы
-                редактировать созданные материалы.
-              </p>
-              <div class="profile-claim" data-admin-claim>
-                <span class="profile-claim-label">Токен владельца:</span>
-                <template v-if="adminIdentity.claimToken">
-                  <code class="profile-claim-value">{{ adminIdentity.claimToken }}</code>
-                  <button type="button" class="profile-claim-copy" @click="copyClaimToken">
-                    {{ adminClaimTokenCopy.copied ? 'Скопировано!' : 'Скопировать токен' }}
-                  </button>
-                </template>
-                <template v-else>
-                  <span class="profile-claim-missing">Получите новый токен в админке.</span>
-                </template>
-              </div>
-              <p v-if="adminClaimTokenCopy.error" class="profile-admin-error">{{ adminClaimTokenCopy.error }}</p>
-              <p class="profile-claim-hint">
-                Токен владельца подтверждает ваши права на уже созданные группы. После входа в админку он обновится
-                автоматически — сохраните его вместе с секретом, чтобы выпускать новые ссылки.
-              </p>
             </div>
           </div>
           <div class="profile-card profile-admin">
@@ -1009,16 +980,6 @@ const adminIdentity = reactive({
   claimToken: '',
 });
 
-const adminIdentityCopy = reactive({
-  copied: false,
-  error: '',
-});
-
-const adminClaimTokenCopy = reactive({
-  copied: false,
-  error: '',
-});
-
 const adminIdentityInitialized = ref(false);
 
 const parseTelegramUserFromInitData = (initData) => {
@@ -1274,50 +1235,6 @@ const copyAdminLink = async () => {
     console.warn('Failed to copy admin link', error);
     adminLink.error = 'Не удалось скопировать ссылку. Скопируйте её вручную.';
     adminLink.copied = false;
-  }
-};
-
-const copyIdentityId = async () => {
-  adminIdentityCopy.error = '';
-  if (!adminIdentity.id) {
-    return;
-  }
-  try {
-    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-      await navigator.clipboard.writeText(adminIdentity.id);
-      adminIdentityCopy.copied = true;
-      setTimeout(() => {
-        adminIdentityCopy.copied = false;
-      }, 2000);
-    } else {
-      throw new Error('Clipboard API недоступен');
-    }
-  } catch (error) {
-    console.warn('Failed to copy admin identity', error);
-    adminIdentityCopy.error = 'Не удалось скопировать идентификатор. Скопируйте его вручную.';
-    adminIdentityCopy.copied = false;
-  }
-};
-
-const copyClaimToken = async () => {
-  adminClaimTokenCopy.error = '';
-  if (!adminIdentity.claimToken) {
-    return;
-  }
-  try {
-    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-      await navigator.clipboard.writeText(adminIdentity.claimToken);
-      adminClaimTokenCopy.copied = true;
-      setTimeout(() => {
-        adminClaimTokenCopy.copied = false;
-      }, 2000);
-    } else {
-      throw new Error('Clipboard API недоступен');
-    }
-  } catch (error) {
-    console.warn('Failed to copy admin claim token', error);
-    adminClaimTokenCopy.error = 'Не удалось скопировать токен. Скопируйте его вручную.';
-    adminClaimTokenCopy.copied = false;
   }
 };
 
