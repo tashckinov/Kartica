@@ -1,6 +1,7 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const crypto = require('crypto');
+const https = require('https');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -17,6 +18,10 @@ const TELEGRAM_ALLOWED_USER_IDS = (process.env.ADMIN_TELEGRAM_ALLOWED_USER_IDS |
 const TELEGRAM_LOGIN_MAX_AGE_SECONDS = Math.max(
   parseInt(process.env.ADMIN_TELEGRAM_LOGIN_MAX_AGE_SECONDS, 10) || 600,
   60,
+);
+const TELEGRAM_BOT_INFO_CACHE_MS = Math.max(
+  parseInt(process.env.ADMIN_TELEGRAM_BOT_INFO_CACHE_MS, 10) || 10 * 60 * 1000,
+  60 * 1000,
 );
 const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:5173',
@@ -37,6 +42,91 @@ const ALLOWED_ORIGINS = (configuredAllowedOrigins
 
 const activeSessions = new Map();
 const ADMIN_GROUP_OWNERSHIP_ERROR = 'Можно изменять только созданные вами группы';
+
+let cachedTelegramBotUsername = '';
+let telegramBotUsernameExpiresAt = 0;
+let pendingTelegramBotUsernamePromise = null;
+
+const fetchTelegramBotUsernameFromApi = () => {
+  if (!TELEGRAM_BOT_TOKEN) {
+    return Promise.resolve('');
+  }
+
+  const apiUrl = new URL(`/bot${TELEGRAM_BOT_TOKEN}/getMe`, 'https://api.telegram.org');
+
+  return new Promise((resolve, reject) => {
+    const request = https.get(apiUrl, (response) => {
+      if (response.statusCode && (response.statusCode < 200 || response.statusCode >= 300)) {
+        response.resume();
+        reject(
+          new Error(
+            `Telegram API вернул код ${response.statusCode} при попытке получить имя бота`,
+          ),
+        );
+        return;
+      }
+
+      const chunks = [];
+      response.on('data', (chunk) => {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      });
+      response.on('end', () => {
+        try {
+          const body = Buffer.concat(chunks).toString('utf-8');
+          const parsed = body ? JSON.parse(body) : null;
+          const username = parsed?.result?.username || parsed?.result?.user?.username || '';
+          if (parsed?.ok && username) {
+            resolve(String(username));
+          } else {
+            reject(new Error('Telegram API не вернул имя бота. Проверьте токен.'));
+          }
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+
+    request.setTimeout(5000, () => {
+      request.destroy(new Error('Не удалось получить имя бота Telegram: таймаут запроса.'));
+    });
+
+    request.on('error', (error) => {
+      reject(error);
+    });
+  });
+};
+
+const getTelegramBotUsername = () => {
+  if (!TELEGRAM_BOT_TOKEN) {
+    return Promise.resolve('');
+  }
+
+  const now = Date.now();
+  if (cachedTelegramBotUsername && telegramBotUsernameExpiresAt > now) {
+    return Promise.resolve(cachedTelegramBotUsername);
+  }
+
+  if (pendingTelegramBotUsernamePromise) {
+    return pendingTelegramBotUsernamePromise;
+  }
+
+  pendingTelegramBotUsernamePromise = fetchTelegramBotUsernameFromApi()
+    .then((username) => {
+      cachedTelegramBotUsername = typeof username === 'string' ? username.trim() : '';
+      telegramBotUsernameExpiresAt = Date.now() + TELEGRAM_BOT_INFO_CACHE_MS;
+      return cachedTelegramBotUsername;
+    })
+    .catch((error) => {
+      cachedTelegramBotUsername = '';
+      telegramBotUsernameExpiresAt = Date.now() + Math.min(TELEGRAM_BOT_INFO_CACHE_MS, 60 * 1000);
+      throw error;
+    })
+    .finally(() => {
+      pendingTelegramBotUsernamePromise = null;
+    });
+
+  return pendingTelegramBotUsernamePromise;
+};
 
 const decodePossibleJson = (value) => {
   if (!value || typeof value !== 'string') {
@@ -384,6 +474,31 @@ async function ensureGroupOwnedByUser(groupId, userId) {
 
   return group;
 }
+
+app.get('/auth/telegram-config', async (req, res) => {
+  if (!TELEGRAM_BOT_TOKEN) {
+    return res.json({
+      botUsername: null,
+      externalLoginAvailable: false,
+      error: 'Telegram авторизация не настроена на сервере.',
+    });
+  }
+
+  try {
+    const username = await getTelegramBotUsername();
+    if (username) {
+      return res.json({ botUsername: username, externalLoginAvailable: true });
+    }
+    return res.json({
+      botUsername: null,
+      externalLoginAvailable: false,
+      error: 'Не удалось определить имя бота Telegram. Попробуйте позже.',
+    });
+  } catch (error) {
+    console.warn('Failed to resolve Telegram bot username', error);
+    return res.status(500).json({ error: 'Не удалось получить настройки Telegram' });
+  }
+});
 
 app.post('/auth/login', (req, res) => {
   const initDataRaw = req.body?.initData;

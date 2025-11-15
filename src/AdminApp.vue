@@ -13,7 +13,7 @@
           Откройте панель в любом браузере и нажмите кнопку ниже — Telegram откроет окно подтверждения.
         </p>
         <p v-else class="muted">
-          Откройте панель внутри Telegram Mini App или укажите <code>VITE_ADMIN_TELEGRAM_BOT_USERNAME</code> для внешнего входа.
+          Откройте панель внутри Telegram Mini App или дождитесь появления кнопки входа через Telegram в браузере.
         </p>
         <p v-if="loginPending && !telegramWebAppAvailable" class="muted pending-message">Ожидаем подтверждение…</p>
         <p v-if="loginError" class="form-error">{{ loginError }}</p>
@@ -259,12 +259,12 @@ const telegramUser = ref(null);
 
 const currentUserId = computed(() => extractTelegramUserId(telegramUser.value));
 
-const telegramBotUsername = (import.meta.env.VITE_ADMIN_TELEGRAM_BOT_USERNAME || '').trim();
+const telegramBotUsername = ref('');
 const telegramWebAppAvailable = ref(false);
 const telegramLoginContainer = ref(null);
 const externalLoginError = ref('');
 
-const externalLoginAvailable = computed(() => Boolean(telegramBotUsername));
+const externalLoginAvailable = computed(() => Boolean(telegramBotUsername.value));
 
 const buildApiUrl = (path, params = {}) => {
   const url = new URL(path, `${apiBaseUrl}/`);
@@ -274,6 +274,59 @@ const buildApiUrl = (path, params = {}) => {
     }
   });
   return url.toString();
+};
+
+const loadTelegramLoginConfig = async () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    const response = await fetch(buildApiUrl('/auth/telegram-config'), {
+      credentials: 'include',
+    });
+
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (error) {
+      // ignore JSON parse errors
+    }
+
+    const errorMessage =
+      data && typeof data === 'object' && typeof data.error === 'string'
+        ? data.error.trim()
+        : '';
+
+    if (!response.ok) {
+      telegramBotUsername.value = '';
+      externalLoginError.value =
+        errorMessage || 'Не удалось получить настройки Telegram. Попробуйте обновить страницу.';
+      return;
+    }
+
+    const usernameRaw =
+      (data && (data.botUsername ?? data.bot_username)) !== undefined
+        ? data.botUsername ?? data.bot_username
+        : '';
+    const username = typeof usernameRaw === 'string' ? usernameRaw.trim() : '';
+
+    telegramBotUsername.value = username;
+
+    if (username) {
+      externalLoginError.value = '';
+    } else if (errorMessage) {
+      externalLoginError.value = errorMessage;
+    } else {
+      externalLoginError.value =
+        'Бот Telegram не настроен для внешнего входа. Обратитесь к администратору.';
+    }
+  } catch (error) {
+    console.error('Failed to load Telegram admin config', error);
+    telegramBotUsername.value = '';
+    externalLoginError.value =
+      'Не удалось получить настройки Telegram. Попробуйте обновить страницу.';
+  }
 };
 
 const groups = ref([]);
@@ -780,7 +833,8 @@ const handleTelegramLogin = async () => {
     } else if (externalLoginAvailable.value) {
       loginError.value = 'Используйте кнопку входа через Telegram ниже.';
     } else {
-      loginError.value = 'Настройте передачу данных Telegram для авторизации.';
+      loginError.value =
+        'Внешняя авторизация Telegram не настроена. Откройте панель внутри Telegram или обратитесь к администратору.';
     }
     return;
   }
@@ -820,13 +874,18 @@ const mountExternalTelegramWidget = () => {
     return;
   }
 
+  const username = telegramBotUsername.value.trim();
+  if (!username) {
+    return;
+  }
+
   container.innerHTML = '';
   externalLoginError.value = '';
 
   const script = document.createElement('script');
   script.src = 'https://telegram.org/js/telegram-widget.js?22';
   script.async = true;
-  script.setAttribute('data-telegram-login', telegramBotUsername);
+  script.setAttribute('data-telegram-login', username);
   script.setAttribute('data-size', 'large');
   script.setAttribute('data-userpic', 'false');
   script.setAttribute('data-request-access', 'write');
@@ -1112,6 +1171,8 @@ const restoreSession = async () => {
 
 onMounted(async () => {
   const initialAuth = resolveTelegramInitData();
+
+  await loadTelegramLoginConfig();
 
   if (!telegramWebAppAvailable.value && externalLoginAvailable.value) {
     await nextTick();
