@@ -1,34 +1,26 @@
 <template>
   <div class="admin-app">
     <div v-if="!isAuthenticated" class="admin-auth">
-      <form class="admin-auth-card" @submit.prevent="handleLogin">
+      <div class="admin-auth-card">
         <h1>Вход в админку</h1>
         <p class="muted">
-          Для доступа загрузите приватный SSH-ключ администратора. Он будет проверен по публичному ключу,
-          указанному на сервере.
+          Авторизуйтесь через Telegram, чтобы управлять контентом карточек.
         </p>
-        <label class="form-field">
-          <span>Файл приватного ключа</span>
-          <input
-            ref="keyFileInput"
-            type="file"
-            accept=".key,.pem,.ppk,.txt,.pub"
-            @change="handleKeyFileChange"
-          />
-        </label>
-        <p v-if="keyFileName" class="muted">Выбран файл: {{ keyFileName }}</p>
-        <p v-if="keyReadError" class="form-error">{{ keyReadError }}</p>
+        <p v-if="!telegramDataAvailable" class="muted">
+          Откройте панель в Telegram Mini App или передайте параметры <code>tgWebAppInitData</code>.
+        </p>
         <p v-if="loginError" class="form-error">{{ loginError }}</p>
-        <button type="submit" class="primary-button" :disabled="!canSubmitKey">
-          {{ loginPending ? 'Проверка ключа...' : 'Войти' }}
+        <button type="button" class="primary-button" @click="handleTelegramLogin" :disabled="loginPending">
+          {{ loginPending ? 'Ожидаем подтверждение…' : 'Авторизоваться через Telegram' }}
         </button>
-      </form>
+      </div>
     </div>
     <div v-else class="admin-dashboard">
       <header class="admin-header">
         <div class="admin-header__titles">
           <h1>Панель администратора</h1>
           <p>Управление группами и карточками</p>
+          <p v-if="adminUserLabel" class="admin-header__user">Вы вошли как {{ adminUserLabel }}</p>
         </div>
         <div class="admin-header__actions">
           <button class="ghost-button" type="button" @click="fetchGroups" :disabled="groupsLoading">
@@ -164,25 +156,11 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { apiBaseUrl } from './apiConfig.js';
 
-const privateKeyContent = ref('');
-const keyFileName = ref('');
-const keyReadError = ref('');
 const loginError = ref('');
 const loginPending = ref(false);
-const isReadingKey = ref(false);
-const keyFileInput = ref(null);
 const isAuthenticated = ref(false);
-
-const normalizePrivateKey = (value) => {
-  if (typeof value !== 'string') {
-    return '';
-  }
-  return value.replace(/\r\n?/g, '\n');
-};
-
-const canSubmitKey = computed(
-  () => Boolean(privateKeyContent.value.trim()) && !loginPending.value && !isReadingKey.value,
-);
+const telegramUser = ref(null);
+const telegramDataAvailable = ref(true);
 
 const buildApiUrl = (path, params = {}) => {
   const url = new URL(path, `${apiBaseUrl}/`);
@@ -253,56 +231,18 @@ const resetActiveGroup = () => {
 
 const clearAuthState = () => {
   isAuthenticated.value = false;
+  telegramUser.value = null;
   resetActiveGroup();
   loginPending.value = false;
-  isReadingKey.value = false;
   loginError.value = '';
-  keyReadError.value = '';
-  privateKeyContent.value = '';
-  keyFileName.value = '';
-  if (keyFileInput.value) {
-    keyFileInput.value.value = '';
-  }
 };
 
 const handleUnauthorized = () => {
-  const message = 'Доступ администратора отклонён. Загрузите ключ снова.';
+  const message = 'Сессия администратора недействительна. Авторизуйтесь через Telegram ещё раз.';
   clearAuthState();
+  resolveTelegramInitData();
   showFeedback('error', message);
   return message;
-};
-
-const handleKeyFileChange = async (event) => {
-  keyReadError.value = '';
-  loginError.value = '';
-
-  const files = event?.target?.files;
-  if (!files || files.length === 0) {
-    privateKeyContent.value = '';
-    keyFileName.value = '';
-    return;
-  }
-
-  const [file] = files;
-  keyFileName.value = file?.name || '';
-  isReadingKey.value = true;
-
-  try {
-    const content = await file.text();
-    const normalized = normalizePrivateKey(content);
-    if (!normalized.trim()) {
-      privateKeyContent.value = '';
-      keyReadError.value = 'Файл ключа пустой';
-      return;
-    }
-    privateKeyContent.value = normalized;
-  } catch (error) {
-    console.error('Failed to read admin key file', error);
-    privateKeyContent.value = '';
-    keyReadError.value = 'Не удалось прочитать файл ключа';
-  } finally {
-    isReadingKey.value = false;
-  }
 };
 
 const parseErrorResponse = async (response) => {
@@ -464,16 +404,122 @@ const handleSelectGroup = async (groupId) => {
   await fetchGroupDetails(groupId);
 };
 
-const handleLogin = async () => {
-  loginError.value = '';
+const decodeTelegramUser = (raw) => {
+  if (!raw || typeof raw !== 'string') {
+    return null;
+  }
+  const queue = [raw];
+  const visited = new Set();
 
-  if (isReadingKey.value) {
-    loginError.value = 'Дождитесь завершения чтения файла ключа';
-    return;
+  while (queue.length) {
+    const current = queue.shift();
+    if (typeof current !== 'string' || !current.trim() || visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+    const trimmed = current.trim();
+
+    if (trimmed.includes('=') && trimmed.includes('&')) {
+      try {
+        const params = new URLSearchParams(trimmed);
+        const userRaw = params.get('user');
+        if (userRaw) {
+          return JSON.parse(userRaw);
+        }
+      } catch (error) {
+        // ignore parse errors
+      }
+    }
+
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed) {
+          if (parsed.user) {
+            if (typeof parsed.user === 'string') {
+              return JSON.parse(parsed.user);
+            }
+            return parsed.user;
+          }
+          if (parsed.id) {
+            return parsed;
+          }
+        }
+      } catch (error) {
+        // ignore JSON parse errors
+      }
+    }
+
+    try {
+      const decoded = decodeURIComponent(trimmed);
+      if (decoded && decoded !== trimmed) {
+        queue.push(decoded);
+      }
+    } catch (error) {
+      // ignore decode errors
+    }
+
+    if (typeof window !== 'undefined' && typeof window.atob === 'function') {
+      try {
+        const base64Decoded = window.atob(trimmed);
+        if (base64Decoded && base64Decoded !== trimmed) {
+          queue.push(base64Decoded);
+        }
+      } catch (error) {
+        // ignore base64 errors
+      }
+    }
   }
 
-  if (!privateKeyContent.value.trim()) {
-    loginError.value = 'Загрузите файл приватного ключа';
+  return null;
+};
+
+const resolveTelegramInitData = () => {
+  if (typeof window === 'undefined') {
+    telegramDataAvailable.value = false;
+    return { initData: '', user: null };
+  }
+
+  const webApp = window.Telegram?.WebApp;
+  if (webApp && typeof webApp === 'object') {
+    if (webApp.initData) {
+      telegramDataAvailable.value = true;
+      return { initData: webApp.initData, user: webApp.initDataUnsafe?.user || null };
+    }
+    if (webApp.initDataUnsafe?.user) {
+      telegramDataAvailable.value = true;
+    }
+  }
+
+  const searchParams = new URLSearchParams(window.location.search || '');
+  const searchInitData = searchParams.get('tgWebAppInitData') || searchParams.get('initData');
+  if (searchInitData) {
+    telegramDataAvailable.value = true;
+    return { initData: searchInitData, user: decodeTelegramUser(searchInitData) };
+  }
+
+  const hash = typeof window.location?.hash === 'string' ? window.location.hash.slice(1) : '';
+  if (hash) {
+    const hashParams = new URLSearchParams(hash);
+    const hashInitData = hashParams.get('tgWebAppData') || hashParams.get('tgWebAppInitData');
+    if (hashInitData) {
+      telegramDataAvailable.value = true;
+      return { initData: hashInitData, user: decodeTelegramUser(hashInitData) };
+    }
+  }
+
+  telegramDataAvailable.value = false;
+  return { initData: '', user: null };
+};
+
+const handleTelegramLogin = async () => {
+  loginError.value = '';
+
+  const { initData, user } = resolveTelegramInitData();
+
+  if (!initData || !initData.trim()) {
+    loginError.value = 'Telegram не передал данные для авторизации.';
+    telegramDataAvailable.value = false;
     return;
   }
 
@@ -484,41 +530,53 @@ const handleLogin = async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ key: privateKeyContent.value }),
+      body: JSON.stringify({ initData: initData.trim() }),
     });
 
     if (!response.ok) {
-      let errorMessage = '';
-      try {
-        const data = await response.json();
-        if (data && typeof data === 'object' && data.error) {
-          errorMessage = data.error;
-        }
-      } catch (error) {
-        // ignore malformed JSON
-      }
-      throw new Error(errorMessage || `Не удалось подтвердить ключ администратора (код ${response.status})`);
+      throw new Error(await parseErrorResponse(response));
     }
 
+    const data = await response.json();
     isAuthenticated.value = true;
+    telegramUser.value = data?.user || user || null;
     showFeedback('success', 'Вы успешно вошли в админку');
-    privateKeyContent.value = '';
-    keyFileName.value = '';
-    if (keyFileInput.value) {
-      keyFileInput.value.value = '';
-    }
     await fetchGroups();
   } catch (error) {
-    console.error('Failed to verify admin key', error);
+    console.error('Failed to authorize via Telegram', error);
     clearAuthState();
-    loginError.value =
-      error instanceof Error && error.message
-        ? error.message
-        : 'Не удалось подтвердить ключ администратора';
+    loginError.value = error instanceof Error && error.message ? error.message : 'Не удалось авторизоваться через Telegram';
   } finally {
     loginPending.value = false;
   }
 };
+
+const adminUserLabel = computed(() => {
+  const user = telegramUser.value;
+  if (!user || typeof user !== 'object') {
+    return '';
+  }
+
+  const normalize = (value) => (typeof value === 'string' ? value.trim() : '');
+  const firstName = normalize(user.first_name ?? user.firstName);
+  const lastName = normalize(user.last_name ?? user.lastName);
+  const username = normalize(user.username);
+  const nameParts = [firstName, lastName].filter(Boolean);
+
+  if (nameParts.length && username) {
+    return `${nameParts.join(' ')} (@${username})`;
+  }
+  if (nameParts.length) {
+    return nameParts.join(' ');
+  }
+  if (username) {
+    return `@${username}`;
+  }
+  if (user.id !== undefined && user.id !== null) {
+    return `ID ${user.id}`;
+  }
+  return '';
+});
 
 const logout = async () => {
   try {
@@ -531,6 +589,7 @@ const logout = async () => {
   } finally {
     clearAuthState();
     showFeedback('success', 'Вы вышли из админки');
+    resolveTelegramInitData();
   }
 };
 
@@ -689,7 +748,17 @@ const restoreSession = async () => {
       return;
     }
 
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (error) {
+      console.warn('Не удалось прочитать ответ проверки администратора', error);
+    }
+
     isAuthenticated.value = true;
+    if (data && typeof data === 'object') {
+      telegramUser.value = data.user || telegramUser.value;
+    }
     await fetchGroups();
   } catch (error) {
     console.warn('Не удалось восстановить сессию администратора', error);
@@ -698,6 +767,7 @@ const restoreSession = async () => {
 };
 
 onMounted(() => {
+  resolveTelegramInitData();
   restoreSession();
 });
 
@@ -743,6 +813,15 @@ onBeforeUnmount(() => {
   color: #0f172a;
 }
 
+.admin-auth-card code {
+  display: inline-block;
+  padding: 2px 6px;
+  background: #f3f4f6;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #0f172a;
+}
+
 .admin-dashboard {
   min-height: 100vh;
   display: flex;
@@ -768,6 +847,12 @@ onBeforeUnmount(() => {
   margin: 6px 0 0;
   color: #6b7280;
   font-size: 15px;
+}
+
+.admin-header__user {
+  margin: 4px 0 0;
+  color: #4b5563;
+  font-size: 14px;
 }
 
 .admin-header__actions {

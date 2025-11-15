@@ -1,16 +1,23 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const crypto = require('crypto');
-const sshpk = require('sshpk');
 
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
-const ADMIN_PUBLIC_KEY = (process.env.ADMIN_PUBLIC_KEY || '').trim();
 const SESSION_COOKIE_NAME = 'kartica_admin_session';
 const SESSION_TTL_MS = Math.max(parseInt(process.env.ADMIN_SESSION_TTL_MS, 10) || 1000 * 60 * 30, 1000 * 60 * 5);
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production';
 const COOKIE_SAME_SITE = process.env.ADMIN_COOKIE_SAME_SITE || 'Lax';
+const TELEGRAM_BOT_TOKEN = (process.env.ADMIN_TELEGRAM_BOT_TOKEN || '').trim();
+const TELEGRAM_ALLOWED_USER_IDS = (process.env.ADMIN_TELEGRAM_ALLOWED_USER_IDS || '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+const TELEGRAM_LOGIN_MAX_AGE_SECONDS = Math.max(
+  parseInt(process.env.ADMIN_TELEGRAM_LOGIN_MAX_AGE_SECONDS, 10) || 600,
+  60,
+);
 const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
@@ -30,47 +37,171 @@ const ALLOWED_ORIGINS = (configuredAllowedOrigins
 
 const activeSessions = new Map();
 
-const normalizeSshPublicKey = (key) => {
-  if (!key || typeof key !== 'string') {
-    return '';
+const decodePossibleJson = (value) => {
+  if (!value || typeof value !== 'string') {
+    return null;
   }
-  const trimmed = key.trim();
+  try {
+    const decoded = decodeURIComponent(value);
+    if (decoded && decoded !== value) {
+      return decodePossibleJson(decoded);
+    }
+  } catch (error) {
+    // ignore URI errors
+  }
+
+  const trimmed = value.trim();
   if (!trimmed) {
-    return '';
+    return null;
   }
-  const [type, value] = trimmed.split(/\s+/);
-  if (!type || !value) {
-    return '';
+
+  try {
+    return JSON.parse(trimmed);
+  } catch (error) {
+    // ignore invalid JSON
   }
-  return `${type} ${value}`;
+
+  try {
+    const base64Decoded = Buffer.from(trimmed, 'base64').toString('utf-8');
+    if (base64Decoded && base64Decoded !== trimmed) {
+      return decodePossibleJson(base64Decoded);
+    }
+  } catch (error) {
+    // ignore base64 errors
+  }
+
+  return null;
 };
 
-const ADMIN_PUBLIC_KEY_NORMALIZED = normalizeSshPublicKey(ADMIN_PUBLIC_KEY);
+const buildInitDataQueryString = (initData) => {
+  if (!initData || typeof initData !== 'string') {
+    return '';
+  }
 
-const derivePublicKeyFromPrivate = (privateKeyContent) => {
-  const normalizedContent = typeof privateKeyContent === 'string' ? privateKeyContent.trim() : privateKeyContent;
-  const attempts = [
-    () => {
-      const privateKey = crypto.createPrivateKey({ key: normalizedContent });
-      const publicKey = crypto.createPublicKey(privateKey);
-      return publicKey.export({ format: 'ssh' }).toString();
-    },
-    () => {
-      const privateKey = sshpk.parsePrivateKey(normalizedContent, 'auto');
-      return privateKey.toPublic().toString('ssh');
-    },
-  ];
+  let raw = initData.trim();
+  if (!raw) {
+    return '';
+  }
 
-  let lastError;
-  for (const attempt of attempts) {
-    try {
-      return attempt();
-    } catch (error) {
-      lastError = error;
+  try {
+    const decoded = decodeURIComponent(raw);
+    if (decoded && decoded !== raw) {
+      raw = decoded;
+    }
+  } catch (error) {
+    // ignore URI errors
+  }
+
+  if (raw.includes('=') && raw.includes('&')) {
+    return raw;
+  }
+
+  const parsedJson = decodePossibleJson(raw);
+  if (parsedJson && typeof parsedJson === 'object') {
+    const params = new URLSearchParams();
+    Object.entries(parsedJson).forEach(([key, value]) => {
+      if (value === undefined || value === null) {
+        return;
+      }
+      if (typeof value === 'object') {
+        params.set(key, JSON.stringify(value));
+      } else {
+        params.set(key, String(value));
+      }
+    });
+    const result = params.toString();
+    if (result) {
+      return result;
     }
   }
 
-  throw lastError || new Error('Unable to derive public key from provided private key');
+  try {
+    const base64Decoded = Buffer.from(raw, 'base64').toString('utf-8');
+    if (base64Decoded && base64Decoded !== raw) {
+      return buildInitDataQueryString(base64Decoded);
+    }
+  } catch (error) {
+    // ignore base64 errors
+  }
+
+  return '';
+};
+
+const parseTelegramInitData = (initDataRaw) => {
+  const queryString = buildInitDataQueryString(initDataRaw);
+  if (!queryString) {
+    throw new Error('Telegram данные не переданы или имеют неверный формат');
+  }
+
+  const params = new URLSearchParams(queryString);
+  const hash = params.get('hash');
+  if (!hash) {
+    throw new Error('Telegram данные не содержат проверочный hash');
+  }
+
+  const entries = [];
+  params.forEach((value, key) => {
+    if (key === 'hash') {
+      return;
+    }
+    entries.push(`${key}=${value}`);
+  });
+  entries.sort();
+
+  const authDate = Number.parseInt(params.get('auth_date'), 10);
+  const userRaw = params.get('user');
+  let user = null;
+
+  if (userRaw) {
+    try {
+      user = JSON.parse(userRaw);
+    } catch (error) {
+      throw new Error('Не удалось разобрать данные пользователя Telegram');
+    }
+  }
+
+  return { hash, dataCheckString: entries.join('\n'), authDate, user };
+};
+
+const verifyTelegramLogin = (initDataRaw) => {
+  if (!TELEGRAM_BOT_TOKEN) {
+    throw new Error('Telegram авторизация не настроена на сервере');
+  }
+
+  const { hash, dataCheckString, authDate, user } = parseTelegramInitData(initDataRaw);
+
+  const secretKey = crypto
+    .createHash('sha256')
+    .update(`WebAppData${TELEGRAM_BOT_TOKEN}`)
+    .digest();
+  const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+
+  if (calculatedHash !== hash) {
+    throw new Error('Не удалось подтвердить данные Telegram');
+  }
+
+  if (!Number.isFinite(authDate) || authDate <= 0) {
+    throw new Error('Telegram не передал время авторизации');
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (nowSeconds - authDate > TELEGRAM_LOGIN_MAX_AGE_SECONDS) {
+    throw new Error('Сессия Telegram устарела, авторизуйтесь снова');
+  }
+
+  if (!user || typeof user !== 'object' || !user.id) {
+    throw new Error('Telegram не передал пользователя');
+  }
+
+  if (TELEGRAM_ALLOWED_USER_IDS.length) {
+    const userIdString = String(user.id);
+    const isAllowed = TELEGRAM_ALLOWED_USER_IDS.includes(userIdString);
+    if (!isAllowed) {
+      throw new Error('У вас нет доступа к админ-панели');
+    }
+  }
+
+  return { user, authDate };
 };
 
 app.use(express.json());
@@ -93,46 +224,6 @@ app.use((req, res, next) => {
   }
   return next();
 });
-
-function doesPrivateKeyMatchAdmin(privateKeyContent) {
-  if (!ADMIN_PUBLIC_KEY_NORMALIZED) {
-    console.warn('ADMIN_PUBLIC_KEY is not configured');
-    return false;
-  }
-
-  if (!privateKeyContent || typeof privateKeyContent !== 'string') {
-    return false;
-  }
-
-  const normalizedContent = privateKeyContent.trim();
-  if (!normalizedContent) {
-    return false;
-  }
-
-  try {
-    const derivedPublicKey = normalizeSshPublicKey(derivePublicKeyFromPrivate(normalizedContent));
-    return derivedPublicKey === ADMIN_PUBLIC_KEY_NORMALIZED;
-  } catch (error) {
-    console.warn('Failed to derive admin public key from provided key', error);
-
-    const normalizedProvided = normalizeSshPublicKey(normalizedContent);
-    if (normalizedProvided && normalizedProvided === ADMIN_PUBLIC_KEY_NORMALIZED) {
-      return true;
-    }
-
-    try {
-      const publicKeyFromInput = crypto
-        .createPublicKey({ key: normalizedContent, format: 'ssh' })
-        .export({ format: 'ssh' })
-        .toString();
-      return normalizeSshPublicKey(publicKeyFromInput) === ADMIN_PUBLIC_KEY_NORMALIZED;
-    } catch (secondaryError) {
-      console.warn('Provided key does not match configured admin key', secondaryError);
-    }
-
-    return false;
-  }
-}
 
 function setSessionCookie(res, token, ttlMs = SESSION_TTL_MS) {
   const maxAgeSeconds = Math.max(Math.floor(ttlMs / 1000), 0);
@@ -206,27 +297,37 @@ function requireAdmin(req, res, next) {
   session.expiresAt = Date.now() + SESSION_TTL_MS;
   setSessionCookie(res, token, SESSION_TTL_MS);
   req.adminSessionToken = token;
+  req.adminUser = session.user;
   return next();
 }
 
 app.post('/auth/login', (req, res) => {
-  const privateKeyContent = req.body?.key;
+  const initDataRaw = req.body?.initData;
 
-  if (!privateKeyContent || typeof privateKeyContent !== 'string' || !privateKeyContent.trim()) {
-    return res.status(400).json({ error: 'Приватный ключ не передан' });
+  if (!initDataRaw || typeof initDataRaw !== 'string' || !initDataRaw.trim()) {
+    return res.status(400).json({ error: 'Данные Telegram не переданы' });
   }
 
-  if (!doesPrivateKeyMatchAdmin(privateKeyContent)) {
-    return res.status(401).json({ error: 'Предоставленный ключ не подходит для входа' });
+  try {
+    const { user } = verifyTelegramLogin(initDataRaw);
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = Date.now() + SESSION_TTL_MS;
+
+    activeSessions.set(token, { expiresAt, user });
+    setSessionCookie(res, token, SESSION_TTL_MS);
+
+    return res.json({ status: 'ok', expiresAt, user });
+  } catch (error) {
+    console.warn('Telegram admin login failed', error);
+    const statusCode =
+      error && typeof error.message === 'string' && error.message === 'Telegram авторизация не настроена на сервере'
+        ? 500
+        : 401;
+    return res
+      .status(statusCode)
+      .json({ error: error.message || 'Не удалось авторизоваться через Telegram' });
   }
-
-  const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = Date.now() + SESSION_TTL_MS;
-
-  activeSessions.set(token, { expiresAt });
-  setSessionCookie(res, token, SESSION_TTL_MS);
-
-  return res.json({ status: 'ok', expiresAt });
 });
 
 app.post('/auth/logout', (req, res) => {
@@ -241,7 +342,7 @@ app.post('/auth/logout', (req, res) => {
 app.get('/auth/verify', requireAdmin, (req, res) => {
   const token = req.adminSessionToken;
   const session = getActiveSession(token);
-  res.json({ status: 'ok', expiresAt: session?.expiresAt });
+  res.json({ status: 'ok', expiresAt: session?.expiresAt, user: session?.user || null });
 });
 
 function parsePagination(query) {
