@@ -101,8 +101,16 @@
                   <textarea v-model.trim="groupForm.description" rows="4"></textarea>
                 </label>
                 <div class="panel-footer">
-                  <button class="primary-button" type="submit" :disabled="groupSaving">
+                  <button class="primary-button" type="submit" :disabled="groupSaving || groupDeleting">
                     {{ groupSaving ? 'Сохранение...' : 'Сохранить группу' }}
+                  </button>
+                  <button
+                    class="danger-button"
+                    type="button"
+                    @click="deleteGroup"
+                    :disabled="groupDeleting || groupSaving"
+                  >
+                    {{ groupDeleting ? 'Удаление...' : 'Удалить группу' }}
                   </button>
                 </div>
               </form>
@@ -180,6 +188,7 @@ const activeGroupError = ref('');
 
 const groupForm = reactive({ title: '', description: '' });
 const groupSaving = ref(false);
+const groupDeleting = ref(false);
 
 const cardsText = ref('');
 const cardsSaving = ref(false);
@@ -304,6 +313,13 @@ const updateGroupInList = (updated) => {
     groups.value.splice(index, 1, normalized);
   } else {
     groups.value.unshift(normalized);
+  }
+};
+
+const removeGroupFromList = (groupId) => {
+  const index = groups.value.findIndex((group) => group.id === groupId);
+  if (index >= 0) {
+    groups.value.splice(index, 1);
   }
 };
 
@@ -451,6 +467,35 @@ const saveGroupDetails = async () => {
     showFeedback('error', error.message || 'Не удалось сохранить группу');
   } finally {
     groupSaving.value = false;
+  }
+};
+
+const deleteGroup = async () => {
+  if (!activeGroup.value) return;
+  const groupId = activeGroup.value.id;
+  const confirmationMessage = `Удалить группу «${activeGroup.value.title || 'Без названия'}»?`;
+  const confirmed =
+    typeof window === 'undefined' ? true : window.confirm(`${confirmationMessage}\nЭто действие нельзя отменить.`);
+  if (!confirmed) {
+    return;
+  }
+
+  groupDeleting.value = true;
+  try {
+    const response = await fetch(buildApiUrl(`/groups/${groupId}`), { method: 'DELETE' });
+    if (!response.ok) {
+      throw new Error(await parseErrorResponse(response));
+    }
+
+    removeGroupFromList(groupId);
+    resetActiveGroup();
+    showFeedback('success', 'Группа удалена');
+    await fetchGroups();
+  } catch (error) {
+    console.error('Failed to delete group', error);
+    showFeedback('error', error.message || 'Не удалось удалить группу');
+  } finally {
+    groupDeleting.value = false;
   }
 };
 
@@ -658,6 +703,10 @@ onBeforeUnmount(() => {
 
 .panel-footer {
   padding-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
 }
 
 .form-vertical {
@@ -703,7 +752,8 @@ onBeforeUnmount(() => {
 }
 
 .primary-button,
-.ghost-button {
+.ghost-button,
+.danger-button {
   border: none;
   border-radius: 10px;
   padding: 10px 18px;
@@ -744,6 +794,24 @@ onBeforeUnmount(() => {
 .ghost-button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.danger-button {
+  background: #dc2626;
+  color: #ffffff;
+  box-shadow: 0 12px 24px rgba(220, 38, 38, 0.3);
+}
+
+.danger-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+  box-shadow: none;
+}
+
+.danger-button:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 32px rgba(220, 38, 38, 0.3);
+  background: #b91c1c;
 }
 
 .group-list {

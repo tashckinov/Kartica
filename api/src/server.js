@@ -306,6 +306,25 @@ app.put('/groups/:id/cards', async (req, res) => {
   }
 });
 
+app.delete('/groups/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid group id' });
+    }
+
+    await prisma.group.delete({ where: { id } });
+
+    res.status(204).send();
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Group not found' });
+    }
+    console.error('Failed to delete group', error);
+    res.status(500).json({ error: 'Failed to delete group' });
+  }
+});
+
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
