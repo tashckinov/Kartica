@@ -16,7 +16,9 @@ RUN npm ci \
 
 COPY . .
 
-RUN npm --prefix api run prisma:generate
+RUN npm --prefix api run prisma:generate \
+ && npm --prefix api run prisma:deploy \
+ && npm --prefix api run seed
 RUN npm run build
 RUN npm --prefix api prune --omit=dev
 
