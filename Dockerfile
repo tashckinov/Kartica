@@ -10,6 +10,7 @@ ENV NODE_ENV=production \
 
 COPY package.json package-lock.json ./
 COPY api/package.json api/package-lock.json ./api/
+COPY api/prisma ./api/prisma
 
 RUN npm ci \
  && npm ci --prefix api
