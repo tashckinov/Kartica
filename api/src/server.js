@@ -11,9 +11,20 @@ const SESSION_COOKIE_NAME = 'kartica_admin_session';
 const SESSION_TTL_MS = Math.max(parseInt(process.env.ADMIN_SESSION_TTL_MS, 10) || 1000 * 60 * 30, 1000 * 60 * 5);
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production';
 const COOKIE_SAME_SITE = process.env.ADMIN_COOKIE_SAME_SITE || 'Lax';
-const DEFAULT_ALLOWED_ORIGIN = process.env.ADMIN_ALLOWED_ORIGIN || 'http://localhost:5173';
-const ALLOWED_ORIGINS = (process.env.ADMIN_ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGIN)
-  .split(',')
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+];
+const configuredAllowedOrigins = [
+  process.env.ADMIN_ALLOWED_ORIGINS,
+  process.env.ADMIN_ALLOWED_ORIGIN,
+]
+  .filter(Boolean)
+  .join(',');
+
+const ALLOWED_ORIGINS = (configuredAllowedOrigins
+  ? configuredAllowedOrigins.split(',')
+  : DEFAULT_ALLOWED_ORIGINS)
   .map((origin) => origin.trim())
   .filter(Boolean);
 
