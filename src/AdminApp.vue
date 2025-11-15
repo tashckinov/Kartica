@@ -153,12 +153,11 @@
 
 <script setup>
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { apiBaseUrl } from './apiConfig.js';
 
 const ADMIN_LOGIN = 'admin';
 const ADMIN_PASSWORD = 'adminadmin';
 const STORAGE_KEY = 'kartica-admin-authenticated';
-
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000').replace(/\/$/, '');
 
 const buildApiUrl = (path, params = {}) => {
   const url = new URL(path, `${apiBaseUrl}/`);

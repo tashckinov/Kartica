@@ -469,8 +469,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import BottomNav from './components/BottomNav.vue';
 import { navItems } from './data/navigation.js';
-
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000').replace(/\/$/, '');
+import { apiBaseUrl } from './apiConfig.js';
 
 const topics = ref([]);
 const currentPageTopicIds = ref([]);
