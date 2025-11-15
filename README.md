@@ -142,6 +142,9 @@ API запускает Telegram-бота из файла `api/bot.js` в том 
 ADMIN_TELEGRAM_BOT_TOKEN=000000000:example-token
 # необязательно, но позволит кнопке открыть мини-приложение прямо из Telegram
 ADMIN_TELEGRAM_MINIAPP_URL=https://t.me/your_bot/miniapp
+# если вы используете тестовый сервер Bot API, включите его и при необходимости переопределите базовый URL
+# ADMIN_TELEGRAM_BOT_USE_TEST_ENV=true
+# ADMIN_TELEGRAM_BOT_API_BASE_URL=https://api.telegram.org
 ```
 
 После запуска сервера API в логах появится сообщение `Telegram bot polling started.`. Команда `/start` отправит приветствие и кнопку

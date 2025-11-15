@@ -54,6 +54,31 @@ const getMiniAppUrl = () =>
     ''
   ).trim();
 
+const getBotApiBaseUrl = () =>
+  (
+    process.env.ADMIN_TELEGRAM_BOT_API_BASE_URL ||
+    process.env.TELEGRAM_BOT_API_BASE_URL ||
+    ''
+  ).trim();
+
+const parseBoolean = (value) => {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return ['1', 'true', 'yes', 'y', 'on'].includes(normalized);
+};
+
+const shouldUseTestEnvironment = () => {
+  const flag =
+    process.env.ADMIN_TELEGRAM_BOT_USE_TEST_ENV ??
+    process.env.TELEGRAM_BOT_USE_TEST_ENV ??
+    '';
+
+  return parseBoolean(flag);
+};
+
 const buildGreetingMessage = (message, miniAppUrl) => {
   const firstName = (message?.from?.first_name || '').trim();
   const lastName = (message?.from?.last_name || '').trim();
@@ -83,8 +108,20 @@ const startTelegramBot = () => {
 
   const miniAppUrl = getMiniAppUrl();
 
+  const botOptions = { polling: true };
+
+  const baseApiUrl = getBotApiBaseUrl();
+  if (baseApiUrl) {
+    botOptions.baseApiUrl = baseApiUrl;
+  }
+
+  if (shouldUseTestEnvironment()) {
+    botOptions.testEnvironment = true;
+    console.info('Telegram bot test environment enabled.');
+  }
+
   try {
-    bot = new TelegramBot(token, { polling: true });
+    bot = new TelegramBot(token, botOptions);
   } catch (error) {
     console.error('Не удалось инициализировать Telegram-бота.', error);
     bot = null;
