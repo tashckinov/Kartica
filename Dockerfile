@@ -8,8 +8,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-ENV NODE_ENV=production \
-    DATABASE_URL="file:/app/api/prisma/dev.db" \
+ENV DATABASE_URL="file:/app/api/prisma/dev.db" \
     VITE_API_BASE_URL="/api"
 
 COPY package.json package-lock.json ./
@@ -25,6 +24,7 @@ RUN npm --prefix api run prisma:generate \
  && npm --prefix api run prisma:deploy \
  && npm --prefix api run seed
 RUN npm run build
+ENV NODE_ENV=production
 RUN npm --prefix api prune --omit=dev
 
 FROM node:20-slim AS runner
