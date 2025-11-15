@@ -73,22 +73,62 @@ const resolveFirstTruthyEnv = (keys) => {
   return '';
 };
 
+const normalizeMiniAppUrl = ({ rawUrl, useTestEnvironment }) => {
+  const trimmedUrl = trimValue(rawUrl);
+
+  if (!trimmedUrl) {
+    return '';
+  }
+
+  if (!useTestEnvironment) {
+    return trimmedUrl;
+  }
+
+  try {
+    const parsedUrl = new URL(trimmedUrl);
+    const host = parsedUrl.hostname.toLowerCase();
+
+    if (host === 't.me' || host === 'telegram.me') {
+      const modeValues = parsedUrl.searchParams.getAll('mode');
+      const hasTestMode = modeValues.some((value) => value && value.toLowerCase() === 'test');
+
+      if (!hasTestMode) {
+        parsedUrl.searchParams.append('mode', 'test');
+      }
+
+      return parsedUrl.toString();
+    }
+
+    return trimmedUrl;
+  } catch (error) {
+    console.warn('Не удалось обработать URL мини-приложения для тестовой среды.', {
+      rawUrl: trimmedUrl,
+      error,
+    });
+
+    return trimmedUrl;
+  }
+};
+
 const getMiniAppUrl = ({ useTestEnvironment }) =>
-  resolveFirstTruthyEnv(
-    useTestEnvironment
-      ? [
-          'ADMIN_TELEGRAM_TEST_MINIAPP_URL',
-          'TELEGRAM_TEST_MINIAPP_URL',
-          'ADMIN_TELEGRAM_MINIAPP_URL',
-          'TELEGRAM_MINIAPP_URL',
-        ]
-      : [
-          'ADMIN_TELEGRAM_MINIAPP_URL',
-          'TELEGRAM_MINIAPP_URL',
-          'ADMIN_TELEGRAM_TEST_MINIAPP_URL',
-          'TELEGRAM_TEST_MINIAPP_URL',
-        ],
-  );
+  normalizeMiniAppUrl({
+    rawUrl: resolveFirstTruthyEnv(
+      useTestEnvironment
+        ? [
+            'ADMIN_TELEGRAM_TEST_MINIAPP_URL',
+            'TELEGRAM_TEST_MINIAPP_URL',
+            'ADMIN_TELEGRAM_MINIAPP_URL',
+            'TELEGRAM_MINIAPP_URL',
+          ]
+        : [
+            'ADMIN_TELEGRAM_MINIAPP_URL',
+            'TELEGRAM_MINIAPP_URL',
+            'ADMIN_TELEGRAM_TEST_MINIAPP_URL',
+            'TELEGRAM_TEST_MINIAPP_URL',
+          ],
+    ),
+    useTestEnvironment,
+  });
 
 const getBotApiBaseUrl = () =>
   resolveFirstTruthyEnv([
