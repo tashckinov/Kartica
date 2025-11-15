@@ -80,28 +80,38 @@ const normalizeMiniAppUrl = ({ rawUrl, useTestEnvironment }) => {
     return '';
   }
 
-  if (!useTestEnvironment) {
-    return trimmedUrl;
-  }
-
   try {
     const parsedUrl = new URL(trimmedUrl);
     const host = parsedUrl.hostname.toLowerCase();
 
-    if (host === 't.me' || host === 'telegram.me') {
+    const pathSegments = parsedUrl.pathname.split('/');
+    let hasUpdatedSegment = false;
+
+    const normalizedSegments = pathSegments.map((segment) => {
+      if (segment.startsWith('@')) {
+        hasUpdatedSegment = true;
+        return segment.slice(1);
+      }
+
+      return segment;
+    });
+
+    if (hasUpdatedSegment) {
+      parsedUrl.pathname = normalizedSegments.join('/');
+    }
+
+    if (useTestEnvironment && (host === 't.me' || host === 'telegram.me')) {
       const modeValues = parsedUrl.searchParams.getAll('mode');
       const hasTestMode = modeValues.some((value) => value && value.toLowerCase() === 'test');
 
       if (!hasTestMode) {
         parsedUrl.searchParams.append('mode', 'test');
       }
-
-      return parsedUrl.toString();
     }
 
-    return trimmedUrl;
+    return parsedUrl.toString();
   } catch (error) {
-    console.warn('Не удалось обработать URL мини-приложения для тестовой среды.', {
+    console.warn('Не удалось обработать URL мини-приложения.', {
       rawUrl: trimmedUrl,
       error,
     });
