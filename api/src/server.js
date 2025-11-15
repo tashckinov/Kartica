@@ -13,6 +13,8 @@ const ADMIN_ID_MAX_LENGTH = 128;
 const ADMIN_DISPLAY_NAME_MAX_LENGTH = 120;
 const ADMIN_USERNAME_MAX_LENGTH = 64;
 const ADMIN_NAME_PART_MAX_LENGTH = 60;
+const ADMIN_IDENTITY_SECRET_MAX_LENGTH = 512;
+const ADMIN_TOKEN_VERIFICATION_ERROR = 'Не удалось подтвердить данные администратора.';
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:5173',
@@ -110,6 +112,47 @@ const sanitizeString = (value, maxLength) => {
   }
 
   return trimmed;
+};
+
+const sanitizeSecretString = (value) => {
+  if (value === undefined || value === null) {
+    return '';
+  }
+
+  const stringValue = typeof value === 'string' ? value : String(value);
+  const trimmed = stringValue.trim();
+
+  if (!trimmed) {
+    return '';
+  }
+
+  if (trimmed.length > ADMIN_IDENTITY_SECRET_MAX_LENGTH) {
+    return trimmed.slice(0, ADMIN_IDENTITY_SECRET_MAX_LENGTH);
+  }
+
+  return trimmed;
+};
+
+const hashAdminIdentitySecret = (secret) =>
+  crypto.createHash('sha256').update(secret, 'utf8').digest('hex');
+
+const areSecretHashesEqual = (hashA, hashB) => {
+  if (!hashA || !hashB) {
+    return false;
+  }
+
+  try {
+    const bufferA = Buffer.from(hashA, 'hex');
+    const bufferB = Buffer.from(hashB, 'hex');
+
+    if (bufferA.length === 0 || bufferA.length !== bufferB.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(bufferA, bufferB);
+  } catch (error) {
+    return false;
+  }
 };
 
 const normalizeAdminUser = (rawUser) => {
@@ -478,16 +521,69 @@ async function replaceGroupCards(groupId, cardsPayload) {
   });
 }
 
-app.post('/auth/token', (req, res) => {
+app.post('/auth/token', async (req, res) => {
   try {
     const userInput = buildAdminUserFromRequest(req.body);
-    const normalizedUser = normalizeAdminUser(userInput) || { id: userInput.id };
+    const secret = sanitizeSecretString(req.body?.secret);
+
+    if (!secret) {
+      const error = new Error('Не передан секрет администратора.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const secretHash = hashAdminIdentitySecret(secret);
+    const requestedDisplayName = userInput.displayName
+      ? sanitizeString(userInput.displayName, ADMIN_DISPLAY_NAME_MAX_LENGTH)
+      : '';
+
+    let identityRecord = await prisma.adminIdentity.findUnique({
+      where: { id: userInput.id },
+    });
+
+    if (!identityRecord) {
+      identityRecord = await prisma.adminIdentity.create({
+        data: {
+          id: userInput.id,
+          secretHash,
+          displayName: requestedDisplayName || null,
+        },
+      });
+    } else if (!areSecretHashesEqual(identityRecord.secretHash, secretHash)) {
+      const error = new Error(ADMIN_TOKEN_VERIFICATION_ERROR);
+      error.statusCode = 403;
+      throw error;
+    } else if (requestedDisplayName && requestedDisplayName !== identityRecord.displayName) {
+      identityRecord = await prisma.adminIdentity.update({
+        where: { id: identityRecord.id },
+        data: { displayName: requestedDisplayName },
+      });
+    }
+
+    const tokenUser = {
+      id: identityRecord.id,
+      displayName:
+        requestedDisplayName || identityRecord.displayName || userInput.displayName || undefined,
+      firstName: userInput.firstName,
+      lastName: userInput.lastName,
+      username: userInput.username,
+    };
+
+    const normalizedUser = normalizeAdminUser(tokenUser) || { id: identityRecord.id };
+
+    if (!normalizedUser.displayName && identityRecord.displayName) {
+      normalizedUser.displayName = identityRecord.displayName;
+    }
+
     const { token, expiresAt } = generateAdminToken(normalizedUser);
 
     return res.json({ token, expiresAt, user: normalizedUser });
   } catch (error) {
     console.warn('Failed to issue admin token', error);
-    const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 400;
+    const statusCode =
+      Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode < 600
+        ? error.statusCode
+        : 400;
     return res
       .status(statusCode)
       .json({ error: error?.message || 'Не удалось выдать токен администратора' });

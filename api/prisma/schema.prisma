@@ -28,3 +28,11 @@ model Card {
   groupId    Int
   group      Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
 }
+
+model AdminIdentity {
+  id          String   @id
+  secretHash  String
+  displayName String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

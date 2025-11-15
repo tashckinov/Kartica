@@ -931,6 +931,8 @@ const toggleFavorite = async (topicId, options = {}) => {
 const ADMIN_IDENTITY_STORAGE_KEY = 'kartica-admin-identity';
 const ADMIN_IDENTITY_ID_MAX_LENGTH = 128;
 const ADMIN_IDENTITY_NAME_MAX_LENGTH = 120;
+const ADMIN_IDENTITY_SECRET_MAX_LENGTH = 512;
+const ADMIN_IDENTITY_SECRET_LENGTH_BYTES = 32;
 
 const sanitizeIdentityString = (value, maxLength = ADMIN_IDENTITY_NAME_MAX_LENGTH) => {
   if (value === undefined || value === null) {
@@ -947,9 +949,42 @@ const sanitizeIdentityString = (value, maxLength = ADMIN_IDENTITY_NAME_MAX_LENGT
   return trimmed;
 };
 
+const sanitizeIdentitySecret = (value) => {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  const stringValue = typeof value === 'string' ? value : String(value);
+  const trimmed = stringValue.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (trimmed.length > ADMIN_IDENTITY_SECRET_MAX_LENGTH) {
+    return trimmed.slice(0, ADMIN_IDENTITY_SECRET_MAX_LENGTH);
+  }
+  return trimmed;
+};
+
+const generateIdentitySecret = () => {
+  try {
+    if (window.crypto?.getRandomValues) {
+      const bytes = new Uint8Array(ADMIN_IDENTITY_SECRET_LENGTH_BYTES);
+      window.crypto.getRandomValues(bytes);
+      return Array.from(bytes)
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+    }
+  } catch (error) {
+    console.warn('Не удалось сгенерировать секрет администратора', error);
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random()
+    .toString(36)
+    .slice(2)}`;
+};
+
 const adminIdentity = reactive({
   id: '',
   displayName: '',
+  secret: '',
 });
 
 const adminIdentityCopy = reactive({
@@ -1016,6 +1051,7 @@ const loadStoredIdentity = () => {
     return {
       id,
       displayName: sanitizeIdentityString(parsed?.displayName, ADMIN_IDENTITY_NAME_MAX_LENGTH),
+      secret: sanitizeIdentitySecret(parsed?.secret),
     };
   } catch (error) {
     console.warn('Не удалось загрузить идентификатор администратора', error);
@@ -1031,6 +1067,7 @@ const persistAdminIdentity = () => {
     const payload = {
       id: sanitizeIdentityString(adminIdentity.id, ADMIN_IDENTITY_ID_MAX_LENGTH),
       displayName: sanitizeIdentityString(adminIdentity.displayName, ADMIN_IDENTITY_NAME_MAX_LENGTH),
+      secret: sanitizeIdentitySecret(adminIdentity.secret),
     };
     localStorage.setItem(ADMIN_IDENTITY_STORAGE_KEY, JSON.stringify(payload));
   } catch (error) {
@@ -1042,12 +1079,17 @@ const setAdminIdentity = (identity) => {
   adminIdentity.id = sanitizeIdentityString(identity?.id, ADMIN_IDENTITY_ID_MAX_LENGTH) || '';
   adminIdentity.displayName =
     sanitizeIdentityString(identity?.displayName, ADMIN_IDENTITY_NAME_MAX_LENGTH) || '';
+  adminIdentity.secret = sanitizeIdentitySecret(identity?.secret);
 };
 
 const initializeAdminIdentity = () => {
   const storedIdentity = loadStoredIdentity();
   if (storedIdentity) {
     setAdminIdentity(storedIdentity);
+    if (!adminIdentity.secret) {
+      adminIdentity.secret = generateIdentitySecret();
+      persistAdminIdentity();
+    }
     adminIdentityInitialized.value = true;
     return;
   }
@@ -1065,7 +1107,7 @@ const initializeAdminIdentity = () => {
     ? `@${username}`
     : '';
 
-  setAdminIdentity({ id: generatedId, displayName: fallbackName });
+  setAdminIdentity({ id: generatedId, displayName: fallbackName, secret: generateIdentitySecret() });
   adminIdentityInitialized.value = true;
   persistAdminIdentity();
 };
@@ -1085,7 +1127,7 @@ const adminLink = reactive({
   copied: false,
 });
 
-const canRequestAdminLink = computed(() => Boolean(adminIdentity.id));
+const canRequestAdminLink = computed(() => Boolean(adminIdentity.id && adminIdentity.secret));
 const hasAdminLink = computed(() => Boolean(adminLink.url));
 
 const buildApiUrl = (path, params = {}) => {
@@ -1134,6 +1176,7 @@ const requestAdminLink = async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         userId: adminIdentity.id,
+        secret: adminIdentity.secret,
         profile: profilePayload,
       }),
     });
