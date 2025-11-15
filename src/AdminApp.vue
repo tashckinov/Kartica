@@ -768,12 +768,11 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  transition: background 0.2s ease, transform 0.2s ease;
+  transition: background 0.2s ease;
 }
 
 .group-list-item button:hover {
   background: #eef2ff;
-  transform: translateX(2px);
 }
 
 .group-list-item.active button {
