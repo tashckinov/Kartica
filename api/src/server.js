@@ -3,9 +3,42 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 const express = require('express');
 const crypto = require('crypto');
+const dotenv = require('dotenv');
+
+const apiRoot = path.join(__dirname, '..');
+const databasePath = path.join(apiRoot, 'prisma', 'dev.db');
+
+const protectedEnvKeys = new Set(Object.keys(process.env));
+
+const loadEnvFile = (filePath) => {
+  if (!filePath) {
+    return;
+  }
+
+  try {
+    if (!fs.existsSync(filePath)) {
+      return;
+    }
+
+    const fileContents = fs.readFileSync(filePath);
+    const parsed = dotenv.parse(fileContents);
+
+    Object.entries(parsed).forEach(([key, value]) => {
+      if (!key || protectedEnvKeys.has(key)) {
+        return;
+      }
+
+      process.env[key] = value;
+    });
+  } catch (error) {
+    console.warn(`Не удалось прочитать файл переменных окружения ${filePath}:`, error.message);
+  }
+};
+
+loadEnvFile(path.join(apiRoot, '..', '.env'));
+loadEnvFile(path.join(apiRoot, '.env'));
 
 const ensurePrismaClientIsGenerated = () => {
-  const apiRoot = path.join(__dirname, '..');
   const schemaPath = path.join(apiRoot, 'prisma', 'schema.prisma');
   const generatedSchemaPath = path.join(apiRoot, 'node_modules', '.prisma', 'client', 'schema.prisma');
 
@@ -48,6 +81,47 @@ const ensurePrismaClientIsGenerated = () => {
   }
 };
 
+const ensureDatabaseMigrationsApplied = () => {
+  try {
+    execSync('npx prisma migrate deploy', {
+      cwd: apiRoot,
+      stdio: 'inherit',
+      env: process.env,
+    });
+  } catch (error) {
+    console.error('Не удалось применить миграции Prisma. Запустите "npm run prisma:deploy" вручную.', error);
+    throw error;
+  }
+};
+
+const ensureSeedDataIfDatabaseMissing = () => {
+  let hasDatabaseFile = false;
+  try {
+    const stats = fs.statSync(databasePath);
+    hasDatabaseFile = stats.size > 0;
+  } catch (error) {
+    hasDatabaseFile = false;
+  }
+
+  if (hasDatabaseFile) {
+    return;
+  }
+
+  try {
+    execSync('npm run seed', {
+      cwd: apiRoot,
+      stdio: 'inherit',
+      env: process.env,
+    });
+  } catch (error) {
+    console.error('Не удалось выполнить сидер Prisma. Запустите "npm run seed" вручную.', error);
+    throw error;
+  }
+};
+
+ensureDatabaseMigrationsApplied();
+ensureSeedDataIfDatabaseMissing();
+
 ensurePrismaClientIsGenerated();
 
 const { PrismaClient } = require('@prisma/client');
@@ -55,6 +129,7 @@ const { PrismaClient } = require('@prisma/client');
 const { startTelegramBot } = require('../bot');
 
 const app = express();
+const apiRouter = express.Router();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
 const SERVE_CLIENT = String(process.env.SERVE_CLIENT || '').toLowerCase();
@@ -96,9 +171,9 @@ const hasExplicitAllowedOrigins = Boolean(configuredAllowedOriginsRaw);
 const ADMIN_GROUP_OWNERSHIP_ERROR = 'Можно изменять только созданные вами группы';
 const GROUP_SEARCH_QUERY_MAX_LENGTH = 120;
 
-app.use(express.json());
+apiRouter.use(express.json());
 
-app.use((req, res, next) => {
+apiRouter.use((req, res, next) => {
   const originHeader = req.headers.origin;
   let allowedOrigin = '';
 
@@ -592,7 +667,7 @@ async function replaceGroupCards(groupId, cardsPayload) {
   });
 }
 
-app.post('/auth/token', async (req, res) => {
+apiRouter.post('/auth/token', async (req, res) => {
   try {
     const userInput = buildAdminUserFromRequest(req.body);
     const secret = sanitizeSecretString(req.body?.secret);
@@ -732,18 +807,18 @@ app.post('/auth/token', async (req, res) => {
   }
 });
 
-app.get('/auth/session', requireAdmin, (req, res) => {
+apiRouter.get('/auth/session', requireAdmin, (req, res) => {
   res.json({
     user: req.adminUser,
     expiresAt: req.adminTokenExpiresAt,
   });
 });
 
-app.post('/auth/logout', (req, res) => {
+apiRouter.post('/auth/logout', (req, res) => {
   res.status(204).send();
 });
 
-app.post('/auth/claim-token', requireAdmin, async (req, res) => {
+apiRouter.post('/auth/claim-token', requireAdmin, async (req, res) => {
   try {
     const claimToken = generateAdminClaimToken();
     const claimTokenHash = hashAdminClaimToken(claimToken);
@@ -766,7 +841,7 @@ app.post('/auth/claim-token', requireAdmin, async (req, res) => {
   }
 });
 
-app.get('/groups', async (req, res) => {
+apiRouter.get('/groups', async (req, res) => {
   let adminUserId = '';
 
   const candidateToken = getAdminTokenFromRequest(req);
@@ -860,7 +935,7 @@ app.get('/groups', async (req, res) => {
   }
 });
 
-app.get('/groups/:id', async (req, res) => {
+apiRouter.get('/groups/:id', async (req, res) => {
   let adminUserId = '';
   const candidateToken = getAdminTokenFromRequest(req);
   if (candidateToken) {
@@ -910,7 +985,7 @@ app.get('/groups/:id', async (req, res) => {
   }
 });
 
-app.get('/cards', async (req, res) => {
+apiRouter.get('/cards', async (req, res) => {
   try {
     const { page, pageSize, skip } = parsePagination(req.query);
 
@@ -943,7 +1018,7 @@ app.get('/cards', async (req, res) => {
   }
 });
 
-app.get('/cards/:id', async (req, res) => {
+apiRouter.get('/cards/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
@@ -970,7 +1045,7 @@ app.get('/cards/:id', async (req, res) => {
   }
 });
 
-app.post('/groups', requireAdmin, async (req, res) => {
+apiRouter.post('/groups', requireAdmin, async (req, res) => {
   try {
     const title = String(req.body?.title ?? '').trim();
     const descriptionRaw = req.body?.description;
@@ -1005,7 +1080,7 @@ app.post('/groups', requireAdmin, async (req, res) => {
   }
 });
 
-app.put('/groups/:id', requireAdmin, async (req, res) => {
+apiRouter.put('/groups/:id', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
@@ -1052,7 +1127,7 @@ app.put('/groups/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.put('/groups/:id/cards', requireAdmin, async (req, res) => {
+apiRouter.put('/groups/:id/cards', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
@@ -1079,7 +1154,7 @@ app.put('/groups/:id/cards', requireAdmin, async (req, res) => {
   }
 });
 
-app.delete('/groups/:id', requireAdmin, async (req, res) => {
+apiRouter.delete('/groups/:id', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
@@ -1104,6 +1179,10 @@ app.delete('/groups/:id', requireAdmin, async (req, res) => {
   }
 });
 
+apiRouter.use((req, res) => res.status(404).json({ error: 'Not found' }));
+
+app.use('/api', apiRouter);
+
 if (shouldServeClient && fs.existsSync(clientIndexPath)) {
   app.use(express.static(clientDistPath));
   app.get(/^\/(?!api(?:\b|\/)).*/, (req, res) => {
@@ -1112,10 +1191,6 @@ if (shouldServeClient && fs.existsSync(clientIndexPath)) {
 }
 
 app.use((req, res) => {
-  if (req.path.startsWith('/api')) {
-    return res.status(404).json({ error: 'Not found' });
-  }
-
   if (shouldServeClient && fs.existsSync(clientIndexPath)) {
     return res.sendFile(clientIndexPath);
   }
